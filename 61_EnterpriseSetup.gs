@@ -28,7 +28,7 @@ function enterpriseSetup() {
     logInfo(
       'EnterpriseSetup',
       'enterpriseSetup',
-      'Inventory PRO 3.0 RC3.1 zostal zainicjalizowany',
+      'Inventory PRO 4.0 zostal zainicjalizowany',
       {
         spreadsheetName: spreadsheet.getName(),
         spreadsheetId: spreadsheet.getId()

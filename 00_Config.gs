@@ -1,13 +1,13 @@
 const CONFIG = Object.freeze({
   EDITION: 'Production Edition',
-  RELEASE_CHANNEL: 'RC3.1',
+  RELEASE_CHANNEL: 'STABLE',
   LOCATION: Object.freeze({
     ID: 'PAWILONY',
     NAME: 'PAWILONY',
     NUMBER: 1,
     NEXT_LOCATION: 'KRUCZA'
   }),
-  VERSION: '3.0.0 RC3.1',
+  VERSION: '4.0.0',
   SHEETS: {
     INVENTORY: 'Inwentura',
     DICTIONARY: 'Slownik',
@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   },
 
   CACHE: {
-    CATALOG_KEY: 'inventory_pro_catalog_pawilony_v3_rc31',
+    CATALOG_KEY: 'inventory_pro_catalog_pawilony_v4',
     TTL_SECONDS: 21600
   },
 

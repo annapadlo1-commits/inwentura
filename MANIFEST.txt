@@ -48,9 +48,7 @@
 62_HealthCheck.gs
 63_RegressionTests.gs
 64_ReportingTests.gs
-CHANGELOG_RC4.md
-MANIFEST.txt
-README_RC4.md
+65_ParserContractTests.gs
 UI_About.html
 UI_AliasManager.html
 UI_Analytics.html
@@ -59,4 +57,6 @@ UI_FinalReview.html
 UI_Import.html
 UI_ProductManager.html
 UI_Theme.html
-appsscript.gs
+appsscript.json
+README.md
+CHANGELOG.md

@@ -175,8 +175,10 @@ function testHalfNumberParser_() {
 }
 
 function testContinuousParser_() {
+  const context = createParserTestContext_(['Martini Bitter', 'Godet VSOP']);
   const parsed = parseInventoryText(
-    'Martini Bitter 1,212 Godet VSOP 1,046'
+    'Martini Bitter 1,212 Godet VSOP 1,046',
+    context
   );
 
   assertCondition_(
@@ -193,8 +195,10 @@ function testContinuousParser_() {
 }
 
 function testParserPunctuation_() {
+  const context = createParserTestContext_(['Litowel Ciemny Lager', 'Inne Beczki Jungle IPA']);
   const parsed = parseInventoryText(
-    'darkroom Litowel Ciemny Lager 24. magazyn Inne Beczki Jungle IPA 20'
+    'darkroom Litowel Ciemny Lager 24. magazyn Inne Beczki Jungle IPA 20',
+    context
   );
 
   assertCondition_(
@@ -210,8 +214,10 @@ function testParserPunctuation_() {
 }
 
 function testParserLocations_() {
+  const context = createParserTestContext_(['Litowel Pomelo', 'Jurajska Pomarancza']);
   const parsed = parseInventoryText(
-    'darkroom Litowel Pomelo 30 Litowel Pomelo 2 magazyn Jurajska Pomarancza 120'
+    'darkroom Litowel Pomelo 30 Litowel Pomelo 2 magazyn Jurajska Pomarancza 120',
+    context
   );
 
   assertCondition_(
@@ -485,13 +491,13 @@ function testNumericProductNamesParser_() {
   );
 
   const expected = [
-    ['Jameson', 12],
-    ['Auchentoshan 12', 1.234],
-    ['Auchentoshan 18', 1.234],
+    ['Jameson 0,7L', 12],
+    ['Auchentoshan 12yo', 1.234],
+    ['Auchentoshan 18yo', 1.234],
     ['Bacardi 4', 0.89],
     ['Bacardi 8', 0.987],
     ['Bacardi 10', 1.123],
-    ['Osco 2 years', 22]
+    ['Osco 2 years old', 22]
   ];
 
   expected.forEach((item, index) => {
@@ -574,11 +580,11 @@ function testNoProductPrefixSkipping_() {
   );
 
   assertCondition_(
-    normalizeText(parsed[0].product) === 'jameson' &&
+    normalizeText(parsed[0].product) === normalizeText('Jameson 0,7L') &&
     parsed[0].value === 12 &&
-    normalizeText(parsed[1].product) === 'auchentoshan 12' &&
+    normalizeText(parsed[1].product) === normalizeText('Auchentoshan 12yo') &&
     parsed[1].value === 1.234 &&
-    normalizeText(parsed[2].product) === 'auchentoshan 18' &&
+    normalizeText(parsed[2].product) === normalizeText('Auchentoshan 18yo') &&
     parsed[2].value === 1.234,
     'Parser pominal poczatek pozycji lub polaczyl produkty: ' +
       JSON.stringify(parsed)

@@ -1,4 +1,9 @@
-function parseInventoryTextLegacy_(inputText, runtimeContext) {
+/**
+ * Inventory PRO 4.0 — jedyny publiczny punkt wejścia Parsera.
+ * Parser zachowuje twarde granice wierszy, a dla tekstu ciągłego używa
+ * longest-match opartego o rzeczywiste nazwy i aliasy katalogowe.
+ */
+function parseInventoryText(inputText, runtimeContext) {
   const raw = String(inputText || '').replace(/\r\n?/g, '\n').trim();
   if (!raw) return [];
   const context = runtimeContext || buildRuntimeContext_();
@@ -219,6 +224,12 @@ function findDictionaryFirstInventoryEntryAt_(tokens, startPosition, context) {
   const span = findLongestExactCatalogSpanAt_(tokens, startPosition, context);
   if (!span) return null;
   const number = readNumberAt_(tokens, span.endPosition);
+  if (
+    number &&
+    isProtectedCatalogNumericNameToken_(tokens, startPosition, span.endPosition, context)
+  ) {
+    return null;
+  }
   return {
     originalInput: tokens.slice(startPosition, number ? span.endPosition + number.consumed : span.endPosition).join(' '),
     product: span.product.name,
@@ -243,8 +254,11 @@ function findLongestExactCatalogSpanAt_(tokens, startPosition, context) {
     const variants = buildParserRecognitionVariants_(raw);
     for (let variantIndex = 0; variantIndex < variants.length; variantIndex++) {
       const key = canonicalParserPhrase_(variants[variantIndex]);
-      const product = phraseIndex[key];
-      if (!product) continue;
+      const products = phraseIndex[key] || [];
+      // Kolizja dokładnego klucza nie może być rozstrzygana kolejnością
+      // produktów w arkuszu. Przekazujemy ją do późniejszego matchera.
+      if (products.length !== 1) continue;
+      const product = products[0];
       best = {
         endPosition: end,
         recognitionInput: product.name,
@@ -271,17 +285,25 @@ function getParserPhraseIndex_(context) {
 
 function addParserPhraseVariants_(index, value, product) {
   const rawVariants = [String(value || '')];
-  if (typeof buildTechnicalRecognitionKeys_ === 'function') {
-    buildTechnicalRecognitionKeys_(value).forEach(key => rawVariants.push(key));
-  }
+  // Do indeksu EXACT nie wolno dodawać wariantów technicznych usuwających
+  // słowa (np. "years old"). Takie warianty są dopuszczalne wyłącznie w
+  // późniejszym, ocenianym matcherze. Inaczej "Osco 2" staje się fałszywie
+  // pełną nazwą "Osco 2 years old".
   buildParserRecognitionVariants_(value).forEach(key => rawVariants.push(key));
 
   rawVariants.forEach(variant => {
     const full = canonicalParserPhrase_(variant);
-    if (full && !index[full]) index[full] = product;
+    if (full) addParserPhraseIndexProduct_(index, full, product);
     const withoutPackaging = stripParserPackagingSuffix_(full);
-    if (withoutPackaging && !index[withoutPackaging]) index[withoutPackaging] = product;
+    if (withoutPackaging) addParserPhraseIndexProduct_(index, withoutPackaging, product);
   });
+}
+
+function addParserPhraseIndexProduct_(index, key, product) {
+  if (!index[key]) index[key] = [];
+  if (!index[key].some(item => normalizeText(item.name) === normalizeText(product.name))) {
+    index[key].push(product);
+  }
 }
 
 function canonicalParserPhrase_(value) {
@@ -374,7 +396,7 @@ function findBestInventoryEntryAt_(tokens, startPosition, context) {
 
     candidates.push({
       originalProduct: originalProduct,
-      product: parserMatch.recognitionInput,
+      product: canonicalMatchedProductName_(parserMatch),
       number: number,
       nextPosition: numberPosition + number.consumed,
       score: score,
@@ -561,7 +583,7 @@ function findLeadingValueInventoryEntryAt_(tokens, startPosition, context) {
 
     candidates.push({
       originalProduct: originalProduct,
-      product: parserMatch.recognitionInput,
+      product: canonicalMatchedProductName_(parserMatch),
       number: number,
       nextPosition: end,
       score: score
@@ -588,6 +610,11 @@ function isProtectedCatalogNumericNameToken_(tokens, startPosition, numberPositi
 
   const raw = String(tokens[numberPosition] || '').replace(/[,:;]+$/g, '');
   if (!/^\d+$/.test(raw)) return false;
+
+  const nextWord = normalizeWordForParser_(tokens[numberPosition + 1] || '');
+  if (['yo', 'year', 'years', 'old', 'rok', 'lata', 'letni', 'letnia'].includes(nextWord)) {
+    return true;
+  }
 
   // Musi istnieć kolejny token, który może być właściwą wartością.
   // Bez niego przypadek pozostaje standardową nazwą + stanem.
@@ -737,6 +764,14 @@ function parserMatchStrength_(match) {
   const candidateScore = Number(match.score ||
     (match.candidates && match.candidates[0] && match.candidates[0].score) || 0);
   return (statusWeight[status] || 0) + candidateScore;
+}
+
+function canonicalMatchedProductName_(parserMatch) {
+  const match = parserMatch && parserMatch.match;
+  if (match && match.product && match.product.name) return match.product.name;
+  return parserMatch && parserMatch.recognitionInput
+    ? parserMatch.recognitionInput
+    : '';
 }
 
 function normalizeRecognitionInput_(value) {

@@ -372,7 +372,7 @@
 
       document.getElementById(
         'saveButton'
-      ).disabled = isBusy;
+      ).disabled = isBusy || previewItems.some(isBlockingIssue);
 
       document.getElementById(
         'cancelButton'
@@ -471,7 +471,9 @@
 
     function toggleAllImport(checked) {
       previewItems.forEach((item, index) => {
-        if (item.status !== 'ERROR') item.include = Boolean(checked);
+        if (!['ERROR', 'PARSE_ERROR', 'NOT_FOUND'].includes(item.status)) {
+          item.include = Boolean(checked);
+        }
       });
       document.querySelectorAll('input[data-bulk-role="import"]').forEach(input => {
         const index = Number(input.closest('tr').dataset.index);
@@ -484,7 +486,8 @@
 
     function toggleAllRemember(checked) {
       previewItems.forEach(item => {
-        const canRemember = Boolean(item.selectedProduct || item.product) && item.status !== 'ERROR';
+        const canRemember = Boolean(item.selectedProduct || item.product) &&
+          !['ERROR', 'PARSE_ERROR', 'NOT_FOUND'].includes(item.status);
         item.learnAlias = canRemember ? Boolean(checked) : false;
       });
       document.querySelectorAll('input[data-bulk-role="remember"]').forEach(input => {
@@ -496,7 +499,10 @@
 
     function updateBulkCheckboxStates() {
       updateBulkCheckboxState_('selectAllImport', previewItems.map(item => Boolean(item.include)));
-      const rememberable = previewItems.filter(item => Boolean(item.selectedProduct || item.product) && item.status !== 'ERROR');
+      const rememberable = previewItems.filter(item =>
+        Boolean(item.selectedProduct || item.product) &&
+        !['ERROR', 'PARSE_ERROR', 'NOT_FOUND'].includes(item.status)
+      );
       updateBulkCheckboxState_('selectAllRemember', rememberable.map(item => Boolean(item.learnAlias)));
     }
 
@@ -1157,6 +1163,7 @@
       if (item.status === 'AMBIGUOUS' && !item.selectedProduct) return true;
       if (item.value === null || item.value === '' || !Number.isFinite(Number(item.value))) return true;
       if (item.requiresLocation && !item.location) return true;
+      if (item.qualityLevel === 'ERROR') return true;
       return false;
     }
 
@@ -1222,7 +1229,7 @@
       if (item.qualityWarning || item.duplicateWarning) {
         cell.className = 'status-warning';
       } else if (
-        ['EXACT', 'ALIAS', 'VARIANT', 'SMART', 'AUTO', 'MANUAL', 'MANUAL_EDIT']
+        ['EXACT', 'ALIAS', 'VARIANT', 'SMART', 'AUTO', 'MANUAL', 'MANUAL_EDIT', 'NEW_PRODUCT']
           .includes(item.status)
       ) {
         cell.className = 'status-ok';
@@ -1296,7 +1303,12 @@
       item.productType = product.type;
       item.category = product.category;
       item.requiresLocation = product.type === 'LOCATION';
-      item.value = Number(rawValue);
+      const parsedValue = parseFlexibleClientNumber_(rawValue);
+      if (!Number.isFinite(parsedValue)) {
+        document.getElementById('smartReviewError').textContent = 'Podaj prawidłową liczbę, np. 1,25 albo 12.';
+        return;
+      }
+      item.value = parsedValue;
       item.location = document.getElementById('smartReviewLocation').value;
       item.status = 'MANUAL_EDIT';
       item.baseMessage = 'Poprawiono ręcznie';
@@ -1481,7 +1493,9 @@
           item.include &&
           (
             !item.selectedProduct ||
-            item.value === null ||
+            !Number.isFinite(Number(item.value)) ||
+            ['PARSE_ERROR', 'NOT_FOUND', 'ERROR', 'AMBIGUOUS'].includes(item.status) ||
+            item.qualityLevel === 'ERROR' ||
             (
               item.productType === 'LOCATION' &&
               !item.location
@@ -1542,6 +1556,15 @@
           );
         })
         .saveImportItems(previewItems);
+    }
+
+    function parseFlexibleClientNumber_(value) {
+      const normalized = String(value === null || value === undefined ? '' : value)
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(',', '.');
+      if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return NaN;
+      return Number(normalized);
     }
 
     function resetPreview() {

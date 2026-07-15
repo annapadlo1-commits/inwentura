@@ -54,6 +54,27 @@ function onOpen() {
   });
 }
 
+/**
+ * Ręczna zmiana SŁOWNIKA lub nazw produktów w INWENTURZE musi od razu
+ * unieważnić katalog. Bez tego Parser może pracować na danych sprzed 6 godzin.
+ */
+function onEdit(event) {
+  try {
+    const range = event && event.range;
+    const sheet = range && range.getSheet();
+    if (!sheet) return;
+    const name = normalizeText(sheet.getName());
+    if (
+      name === normalizeText(CONFIG.SHEETS.DICTIONARY) ||
+      (name === normalizeText(CONFIG.SHEETS.INVENTORY) && range.getColumn() === 1)
+    ) {
+      invalidateProductCatalogCache_();
+    }
+  } catch (error) {
+    console.error('Inventory PRO onEdit cache invalidation: ' + String(error));
+  }
+}
+
 function showNewProductsSheet_() {
   activateSheetByName_(CONFIG.SHEETS.NEW_PRODUCTS);
 }

@@ -38,13 +38,16 @@ function undoImportById_(importId) {
 
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     const inventorySheet = spreadsheet.getSheetByName(CONFIG.SHEETS.INVENTORY);
-    const historySheet = getOrCreateBusinessHistorySheet_();
+    const historySheet = getOrCreateTechnicalHistorySheet_();
 
     if (!inventorySheet) {
       throw new Error('Nie znaleziono arkusza Inwentura.');
     }
 
     const lastRow = historySheet.getLastRow();
+    if (lastRow < 2) {
+      return { importId, restoredCount: 0, skippedCount: 0 };
+    }
     const values = historySheet.getRange(2, 1, lastRow - 1, 16).getValues();
 
     let restoredCount = 0;

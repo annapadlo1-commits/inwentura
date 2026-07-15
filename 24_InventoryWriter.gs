@@ -11,6 +11,10 @@ function saveImportItems(items) {
   const lock = LockService.getDocumentLock();
   const startedAt = Date.now();
   const importId = createUniqueId_('IMP');
+  let inventorySheet = null;
+  let originalColumnBuffers = null;
+  let inventoryLastRow = 0;
+  let inventoryWritten = false;
 
   try {
     lock.waitLock(30000);
@@ -18,6 +22,7 @@ function saveImportItems(items) {
     const sheet = getSheetByConfiguredName_(
       CONFIG.SHEETS.INVENTORY
     );
+    inventorySheet = sheet;
 
     if (!sheet) {
       throw new Error(
@@ -53,6 +58,8 @@ function saveImportItems(items) {
       usedColumns,
       lastRow
     );
+    originalColumnBuffers = cloneColumnBuffers_(columnBuffers);
+    inventoryLastRow = lastRow;
 
     const results = [];
     let savedCount = 0;
@@ -79,6 +86,7 @@ function saveImportItems(items) {
 
     annotateSavedDuplicateResults_(results, qualitySettings);
 
+    inventoryWritten = true;
     writeColumnBuffers_(
       sheet,
       columnBuffers,
@@ -86,7 +94,6 @@ function saveImportItems(items) {
     );
 
     SpreadsheetApp.flush();
-
     appendImportHistory_(importId, results);
     appendImportReport_(importId, results);
 
@@ -132,6 +139,20 @@ function saveImportItems(items) {
     return response;
 
   } catch (error) {
+    if (inventoryWritten && inventorySheet && originalColumnBuffers) {
+      try {
+        writeColumnBuffers_(inventorySheet, originalColumnBuffers, inventoryLastRow);
+        SpreadsheetApp.flush();
+      } catch (rollbackError) {
+        logError(
+          'InventoryWriter',
+          'saveImportItems.rollback',
+          rollbackError,
+          { importId: importId },
+          0
+        );
+      }
+    }
     logError(
       'InventoryWriter',
       'saveImportItems',
@@ -145,6 +166,14 @@ function saveImportItems(items) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function cloneColumnBuffers_(buffers) {
+  const clone = {};
+  Object.keys(buffers || {}).forEach(column => {
+    clone[column] = (buffers[column] || []).map(row => [row[0]]);
+  });
+  return clone;
 }
 
 function collectUsedTargetColumns_(
