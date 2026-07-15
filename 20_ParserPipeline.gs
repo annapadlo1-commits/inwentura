@@ -30,7 +30,7 @@ function createParserContext_(runtimeContext) {
   return {
     runtime: runtimeContext || buildRuntimeContext_(),
     contractVersion: '1.0',
-    pipelineVersion: '1.0',
+    pipelineVersion: '1.1',
     stages: getParserPipelineStages_()
   };
 }
@@ -79,8 +79,10 @@ function getParserPipelineInfo() {
     publicEntryPoint: 'parseInventoryText',
     executionEngine: 'parseInventoryTextLegacy_',
     contractVersion: '1.0',
-    pipelineVersion: '1.0',
+    pipelineVersion: '1.1',
     behaviorChange: false,
+    replacementCore: 'executeParser31StateMachine_',
+    replacementMode: 'shadow',
     stages: getParserPipelineStages_()
   };
 }
