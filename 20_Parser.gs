@@ -1,4 +1,4 @@
-function parseInventoryText(inputText, runtimeContext) {
+function parseInventoryTextLegacy_(inputText, runtimeContext) {
   const raw = String(inputText || '').replace(/\r\n?/g, '\n').trim();
   if (!raw) return [];
   const context = runtimeContext || buildRuntimeContext_();
