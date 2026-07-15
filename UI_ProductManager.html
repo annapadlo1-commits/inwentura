@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root{--blue:#1a73e8;--red:#d84315;--green:#188038;--bg:#f6f8fb;--line:#dfe3e8;--text:#202124;--muted:#5f6368;}
+    *{box-sizing:border-box} body{margin:0;font-family:Arial,sans-serif;color:var(--text);background:var(--bg);font-size:14px}
+    .app{height:100vh;display:grid;grid-template-rows:auto 1fr}
+    header{background:#fff;border-bottom:1px solid var(--line);padding:14px 18px;display:flex;align-items:center;justify-content:space-between}
+    .brand{display:flex;align-items:center;gap:12px}.pizza{font-size:36px}.title{font-size:22px;font-weight:800}.subtitle{color:var(--muted);font-size:12px;margin-top:2px}
+    .summary{display:flex;gap:8px;flex-wrap:wrap}.badge{background:#eef3fd;padding:7px 10px;border-radius:999px;font-size:12px}
+    main{display:grid;grid-template-columns:340px 1fr;min-height:0}
+    .sidebar{background:#fff;border-right:1px solid var(--line);padding:14px;display:flex;flex-direction:column;min-height:0}
+    input,select{width:100%;padding:10px;border:1px solid #c7cbd1;border-radius:8px;background:#fff;font-size:14px}
+    .filters{display:grid;grid-template-columns:1fr 120px;gap:8px;margin-bottom:10px}
+    .list{overflow:auto;border:1px solid var(--line);border-radius:10px;flex:1}
+    .product{padding:11px 12px;border-bottom:1px solid #edf0f3;cursor:pointer}.product:hover{background:#f5f8ff}.product.selected{background:#e8f0fe;border-left:4px solid var(--blue)}
+    .product-name{font-weight:700}.meta{color:var(--muted);font-size:12px;margin-top:4px}.inactive{opacity:.55}
+    .content{padding:18px;overflow:auto}.empty{height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:16px}
+    .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:14px}.card h3{margin:0 0 14px;font-size:16px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.field label{display:block;font-weight:700;font-size:12px;margin:0 0 5px;color:#3c4043}
+    .toggle{display:flex;align-items:center;gap:8px;margin-top:24px}.toggle input{width:auto}
+    .actions{display:flex;gap:8px;justify-content:flex-end;position:sticky;bottom:0;background:linear-gradient(transparent,#f6f8fb 30%);padding-top:28px}
+    button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}.primary{background:var(--blue);color:white}.danger{background:#fce8e6;color:#b3261e}.secondary{background:#eef0f3;color:#303134}.success{background:#e6f4ea;color:#137333}
+    .aliases{display:flex;flex-wrap:wrap;gap:7px}.chip{display:flex;align-items:center;gap:6px;background:#f1f3f4;border-radius:999px;padding:7px 9px}.chip button{padding:0;background:transparent;color:#b3261e;font-size:15px}
+    .alias-add{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}.message{display:none;margin:0 0 12px;padding:10px;border-radius:8px}.message.ok{display:block;background:#e6f4ea;color:#137333}.message.error{display:block;background:#fce8e6;color:#b3261e}
+    .loading{position:fixed;inset:0;background:rgba(255,255,255,.8);display:flex;align-items:center;justify-content:center;font-weight:700;z-index:10}
+  </style>
+  <?!= includeInventoryUiTheme_(); ?>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><div class="pizza">🍕</div><div><div class="title">Product Manager</div><div class="subtitle">Inventory PRO <span id="version"></span></div></div></div>
+    <div class="summary" id="summary"></div>
+  </header>
+  <main>
+    <aside class="sidebar">
+      <div class="filters"><input id="search" placeholder="Szukaj produktu lub aliasu..." oninput="renderList()"><select id="statusFilter" onchange="renderList()"><option value="all">Wszystkie</option><option value="active">Aktywne</option><option value="archived">Archiwalne</option></select></div>
+      <div class="list" id="productList"></div>
+    </aside>
+    <section class="content" id="content"><div class="empty">Wybierz produkt z listy.</div></section>
+  </main>
+</div>
+<div class="loading" id="loading">🍕 Wczytuję katalog...</div>
+<script>
+  let state={products:[],selected:null};
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function fail(e){setLoading(false);showMessage((e&&e.message)||String(e),'error')}
+  function setLoading(v){document.getElementById('loading').style.display=v?'flex':'none'}
+  function load(){setLoading(true);google.script.run.withSuccessHandler(data=>{state.products=data.products||[];document.getElementById('version').textContent='v'+data.version;renderSummary(data.summary||{},data.performance||{});renderList();setLoading(false)}).withFailureHandler(fail).getProductManagerData()}
+  function renderSummary(s,p){document.getElementById('summary').innerHTML=`<span class="badge">Produkty: <b>${s.products||0}</b></span><span class="badge">Aktywne: <b>${s.active||0}</b></span><span class="badge">Archiwalne: <b>${s.archived||0}</b></span><span class="badge">Aliasy: <b>${s.aliases||0}</b></span><span class="badge">⚡ ${p.loadMs||0} ms</span>`}
+  function renderList(){const q=document.getElementById('search').value.toLowerCase().trim();const f=document.getElementById('statusFilter').value;const rows=state.products.filter(p=>{if(f==='active'&&!p.active)return false;if(f==='archived'&&p.active)return false;const hay=(p.name+' '+(p.aliases||[]).join(' ')+' '+p.category).toLowerCase();return !q||hay.includes(q)});document.getElementById('productList').innerHTML=rows.map(p=>`<div class="product ${state.selected&&state.selected.normalizedName===p.normalizedName?'selected':''} ${p.active?'':'inactive'}" onclick="selectProduct('${encodeURIComponent(p.normalizedName)}')"><div class="product-name">${esc(p.name)}</div><div class="meta">${esc(p.type)} · ${esc(p.category||'bez kategorii')} · ${(p.aliases||[]).length} aliasów</div></div>`).join('')||'<div class="product">Brak wyników.</div>'}
+  function selectProduct(key){state.selected=state.products.find(p=>p.normalizedName===decodeURIComponent(key));renderList();renderEditor()}
+  function renderEditor(){const p=state.selected;if(!p)return;const c=p.columns||{};document.getElementById('content').innerHTML=`<div id="msg" class="message"></div><div class="card"><h3>Dane produktu</h3><div class="grid"><div class="field"><label>Nazwa produktu</label><input id="name" value="${esc(p.name)}"></div><div class="field"><label>Kategoria</label><input id="category" value="${esc(p.category||'')}"></div><div class="field"><label>Typ</label><select id="type"><option ${p.type==='NORMAL'?'selected':''}>NORMAL</option><option ${p.type==='KEG'?'selected':''}>KEG</option><option ${p.type==='LOCATION'?'selected':''}>LOCATION</option></select></div><div class="field"><label>Pozycja w inwenturze</label><input disabled value="${p.inventoryRow||'BRAK'}"></div></div><label class="toggle"><input type="checkbox" id="active" ${p.active?'checked':''}> Produkt aktywny</label></div><div class="card"><h3>Mapowanie kolumn</h3><div class="grid-5">${columnField('Sztuki','quantity',c.quantity)}${columnField('Waga','weight',c.weight)}${columnField('Magazyn','warehouse',c.warehouse)}${columnField('Darkroom','darkroom',c.darkroom)}${columnField('Lodówki','fridges',c.fridges)}</div></div><div class="card"><h3>Aliasy</h3><div class="aliases">${(p.aliases||[]).map(a=>`<span class="chip">${esc(a)}<button title="Usuń" onclick="deleteAlias('${encodeURIComponent(a)}')">×</button></span>`).join('')||'<span class="meta">Brak aliasów.</span>'}</div><div class="alias-add"><input id="newAlias" placeholder="Nowy alias"><button class="success" onclick="addAlias()">+ Dodaj alias</button></div></div><div class="actions"><button class="secondary" onclick="load()">Odśwież</button><button class="primary" onclick="saveProduct()">Zapisz zmiany</button></div>`}
+  function columnField(label,key,value){return `<div class="field"><label>${label}</label><input id="col_${key}" maxlength="3" value="${esc(value||'')}"></div>`}
+  function payload(){return{originalName:state.selected.name,name:document.getElementById('name').value,category:document.getElementById('category').value,type:document.getElementById('type').value,active:document.getElementById('active').checked,columns:{quantity:document.getElementById('col_quantity').value,weight:document.getElementById('col_weight').value,warehouse:document.getElementById('col_warehouse').value,darkroom:document.getElementById('col_darkroom').value,fridges:document.getElementById('col_fridges').value}}}
+  function saveProduct(){setLoading(true);google.script.run.withSuccessHandler(r=>{setLoading(false);showMessage(r.message,'ok');setTimeout(load,500)}).withFailureHandler(fail).saveProductManagerChanges(payload())}
+  function addAlias(){const a=document.getElementById('newAlias').value.trim();if(!a)return showMessage('Wpisz alias.','error');setLoading(true);google.script.run.withSuccessHandler(r=>{setLoading(false);showMessage(r.message,'ok');setTimeout(load,400)}).withFailureHandler(fail).addProductAliasFromManager(a,state.selected.name)}
+  function deleteAlias(encoded){if(!confirm('Usunąć ten alias?'))return;setLoading(true);google.script.run.withSuccessHandler(r=>{setLoading(false);showMessage(r.message,'ok');setTimeout(load,400)}).withFailureHandler(fail).deleteProductAliasFromManager(decodeURIComponent(encoded),state.selected.name)}
+  function showMessage(text,type){const el=document.getElementById('msg');if(!el){alert(text);return}el.textContent=text;el.className='message '+type}
+  load();
+</script>
+</body>
+</html>
