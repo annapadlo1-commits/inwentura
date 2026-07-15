@@ -20,6 +20,9 @@ function runAllEnterpriseTests() {
     testParserLongestMatchRC4_,
     testParserHardLineBoundaryRC4_,
     testParserLeadingValueRC4_,
+    testZeroVariantLucanoRC42_,
+    testZeroVariantColaRC42_,
+    testNumericZeroOrdinaryProductRC42_,
     testAliasLoader_,
     testProductCatalog_,
     testExactMatcher_,
@@ -938,4 +941,41 @@ function testParserLeadingValueRC4_() {
   const parsed = parseInventoryText('1,407 Ardbeg 10', context);
   assertCondition_(parsed.length === 1 && normalizeText(parsed[0].product) === 'ardbeg 10' && parsed[0].value === 1.407,
     'Wartosc przed produktem nie zostala rozpoznana: ' + JSON.stringify(parsed));
+}
+
+
+/** RC4.2 — ZERO w nazwie produktu musi być chronione przed ekstrakcją wartości. */
+function testZeroVariantLucanoRC42_() {
+  const context = createParserTestContext_(['Amaro Lucano 1L', 'Amaro Lucano 0% 0,7L']);
+  context.catalog[1].aliases = ['amaro lucano zero', 'lucano zero'];
+  delete context.__parserRC4Prepared;
+  const parsed = parseInventoryText('amaro lucano zero 1,234', context);
+  assertCondition_(
+    parsed.length === 1 &&
+    normalizeText(parsed[0].product).indexOf('lucano zero') >= 0 &&
+    Number(parsed[0].value) === 1.234,
+    'Lucano ZERO rozpoznane nieprawidłowo: ' + JSON.stringify(parsed)
+  );
+}
+
+function testZeroVariantColaRC42_() {
+  const context = createParserTestContext_(['Fritz 200ml KOLA', 'Fritz 200ml KOLA BEZ CUKRU']);
+  context.catalog[1].aliases = ['kola zero', 'kola 0', 'fritz kola zero'];
+  delete context.__parserRC4Prepared;
+  const parsed = parseInventoryText('kola 0 12', context);
+  assertCondition_(
+    parsed.length === 1 &&
+    normalizeText(parsed[0].product) === 'kola 0' &&
+    Number(parsed[0].value) === 12,
+    'KOLA ZERO rozpoznana nieprawidłowo: ' + JSON.stringify(parsed)
+  );
+}
+
+function testNumericZeroOrdinaryProductRC42_() {
+  const context = createParserTestContext_(['Fritz 200ml KOLA']);
+  const parsed = parseInventoryText('fritz kola 0', context);
+  assertCondition_(
+    parsed.length === 1 && Number(parsed[0].value) === 0,
+    'Zwykła wartość zero przestała działać: ' + JSON.stringify(parsed)
+  );
 }

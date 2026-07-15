@@ -212,8 +212,27 @@ function buildParserNameVariants_(value) {
   addParserVariant_(variants, ageCanonical);
   addParserVariant_(variants, ageCanonical.replace(/\s+yo\b/g, ''));
 
+  // Warianty ZERO są częścią nazwy produktu, a nie wartością inwentaryzacji.
+  // Dotyczy m.in. Amaro Lucano 0% oraz produktów typu KOLA BEZ CUKRU.
+  // Dzięki temu:
+  //   amaro lucano zero 1,234 -> produkt 0%, wartość 1,234
+  //   kola 0 12 -> produkt KOLA BEZ CUKRU, wartość 12
+  if (/\b0%\b/.test(base) || /\b0\s*%/.test(base)) {
+    addParserVariant_(variants, base.replace(/\b0\s*%/g, 'zero'));
+    addParserVariant_(variants, base.replace(/\b0\s*%/g, '0'));
+  }
+  if (/\bzero\b/.test(base)) {
+    addParserVariant_(variants, base.replace(/\bzero\b/g, '0'));
+    addParserVariant_(variants, base.replace(/\bzero\b/g, '0%'));
+  }
+  if (/\bbez cukru\b/.test(base)) {
+    addParserVariant_(variants, base.replace(/\bbez cukru\b/g, 'zero'));
+    addParserVariant_(variants, base.replace(/\bbez cukru\b/g, '0'));
+  }
+
   // Wariant bez technicznej pojemności na końcu. Dzięki temu Jameson 0,7L
   // może być rozpoznany jako "Jameson", a następujące 12 pozostaje wartością.
+  // UWAGA: 0% nie jest pojemnością i nie może być usuwane z nazwy wariantu.
   const withoutVolume = removeTrailingParserVolume_(base);
   addParserVariant_(variants, withoutVolume);
 
@@ -231,7 +250,6 @@ function addParserVariant_(list, value) {
 function removeTrailingParserVolume_(value) {
   return String(value || '')
     .replace(/\s+\d+(?:\.\d+)?\s*(?:ml|cl|l|litre|liter|litra|litry|kg)\s*$/g, '')
-    .replace(/\s+\d+(?:\.\d+)?\s*%\s*$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
