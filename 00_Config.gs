@@ -1,13 +1,13 @@
 const CONFIG = Object.freeze({
   EDITION: 'Production Edition',
-  RELEASE_CHANNEL: 'RC4.2',
+  RELEASE_CHANNEL: 'RC3.1',
   LOCATION: Object.freeze({
     ID: 'PAWILONY',
     NAME: 'PAWILONY',
     NUMBER: 1,
     NEXT_LOCATION: 'KRUCZA'
   }),
-  VERSION: '3.0.0 RC4.2',
+  VERSION: '3.0.0 RC3.1',
   SHEETS: {
     INVENTORY: 'Inwentura',
     DICTIONARY: 'Slownik',
@@ -17,6 +17,7 @@ const CONFIG = Object.freeze({
     TECH_LOG: 'Log techniczny',
     IMPORT_AUDIT: 'Audyt importow',
     NEW_PRODUCTS: 'Nowe produkty',
+    EXPORT_HISTORY: 'Historia eksportow',
     DATA_AUDIT: 'Audyt danych',
     HISTORY_LEGACY: 'Historia legacy'
   },
@@ -33,7 +34,7 @@ const CONFIG = Object.freeze({
   },
 
   CACHE: {
-    CATALOG_KEY: 'inventory_pro_catalog_pawilony_v3_rc4',
+    CATALOG_KEY: 'inventory_pro_catalog_pawilony_v3_rc31',
     TTL_SECONDS: 21600
   },
 

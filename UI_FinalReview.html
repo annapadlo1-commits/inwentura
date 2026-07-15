@@ -46,14 +46,6 @@
     <div id="status" class="status"></div>
   </div>
 </main>
-<div id="confirmOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
-  <div style="background:white;max-width:560px;padding:24px;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25)">
-    <h2 style="margin-top:0">Zakończyć bieżącą inwentaryzację?</h2>
-    <p>Aplikacja utworzy archiwum, wygeneruje XLSX i opcjonalnie PDF, zapisze zdarzenie w Historii, a następnie <b>wyczyści bieżące wartości i rozpocznie nową inwentaryzację</b>.</p>
-    <label style="display:block;margin:18px 0"><input id="confirmClear" type="checkbox" onchange="document.getElementById('confirmProceed').disabled=!this.checked"> Rozumiem, że bieżące wartości zostaną wyczyszczone.</label>
-    <div style="display:flex;justify-content:flex-end;gap:10px"><button class="secondary" onclick="closeFinalizeConfirm()">Anuluj</button><button class="primary" id="confirmProceed" disabled onclick="executeFinalizeExport()">Zakończ, wyeksportuj i rozpocznij nową</button></div>
-  </div>
-</div>
 <script>
 let data=null; const edits={};
 function formatValue(v){const n=Number(v);return Number.isFinite(n)?new Intl.NumberFormat('pl-PL',{maximumFractionDigits:3}).format(n):v;}
@@ -90,12 +82,10 @@ function renderRows(){
     tbody.appendChild(tr);
   });
 }
-function editValue(el){edits[el.dataset.a1]=el.value;const b=document.getElementById('saveCorrections');b.style.display='inline-block';b.disabled=false;b.textContent='Zapisz '+Object.keys(edits).length+' poprawki';}
+function editValue(el){edits[el.dataset.a1]=el.value;}
 function corrections(){return Object.keys(edits).map(a1=>({a1,value:edits[a1]}));}
 function saveCorrections(){toggleBusy(true);google.script.run.withSuccessHandler(r=>{showStatus('Zapisano poprawki: '+r.updated,'ok');Object.keys(edits).forEach(k=>delete edits[k]);reloadData();toggleBusy(false);}).withFailureHandler(e=>{showError(e);toggleBusy(false);}).applyFinalReviewCorrections(corrections(),data.sourceSheetName);}
-function finalizeExport(){if(data.isCurrentInventory){document.getElementById('confirmClear').checked=false;document.getElementById('confirmProceed').disabled=true;document.getElementById('confirmOverlay').style.display='flex';return;}executeFinalizeExport();}
-function closeFinalizeConfirm(){document.getElementById('confirmOverlay').style.display='none';}
-function executeFinalizeExport(){closeFinalizeConfirm();const excluded=[...document.querySelectorAll('.include:not(:checked)')].map(x=>x.dataset.key);toggleBusy(true);showStatus('Generuję Excel PRO i raport PDF. To może potrwać kilkanaście sekund…','ok');google.script.run.withSuccessHandler(r=>{const pdf=r.pdfUrl?`<a href="${esc(r.pdfUrl)}" target="_blank">Otwórz raport PDF</a>`:'';showStatus(`<b>Gotowe — ${esc(r.exportId)}</b><div class="links" style="margin-top:8px"><a href="${esc(r.xlsxUrl)}" target="_blank">Otwórz plik XLSX</a>${pdf}<a href="${esc(r.spreadsheetUrl)}" target="_blank">Otwórz wersję Google Sheets</a></div>`,'ok',true);toggleBusy(false);}).withFailureHandler(e=>{showError(e);toggleBusy(false);}).finalizeInventoryAndExport({corrections:corrections(),excludedProductKeys:excluded,note:document.getElementById('note').value,sourceSheetName:data.sourceSheetName,includePdf:document.getElementById('includePdf').checked});}
+function finalizeExport(){if(!confirm(data.isCurrentInventory?'Zakończyć inwentaryzację, utworzyć archiwum i wygenerować osobny plik XLSX?':'Wygenerować ponownie eksport dla wybranego arkusza archiwalnego?'))return;const excluded=[...document.querySelectorAll('.include:not(:checked)')].map(x=>x.dataset.key);toggleBusy(true);showStatus('Generuję Excel PRO i raport PDF. To może potrwać kilkanaście sekund…','ok');google.script.run.withSuccessHandler(r=>{const pdf=r.pdfUrl?`<a href="${esc(r.pdfUrl)}" target="_blank">Otwórz raport PDF</a>`:'';showStatus(`<b>Gotowe — ${esc(r.exportId)}</b><div class="links" style="margin-top:8px"><a href="${esc(r.xlsxUrl)}" target="_blank">Otwórz plik XLSX</a>${pdf}<a href="${esc(r.spreadsheetUrl)}" target="_blank">Otwórz wersję Google Sheets</a></div>`,'ok',true);toggleBusy(false);}).withFailureHandler(e=>{showError(e);toggleBusy(false);}).finalizeInventoryAndExport({corrections:corrections(),excludedProductKeys:excluded,note:document.getElementById('note').value,sourceSheetName:data.sourceSheetName,includePdf:document.getElementById('includePdf').checked});}
 function toggleBusy(on){document.getElementById('exportBtn').disabled=on;document.getElementById('saveCorrections').disabled=on;}
 function showStatus(msg,type,html){const el=document.getElementById('status');el.className='status show '+type;if(html)el.innerHTML=msg;else el.textContent=msg;}
 function showError(e){showStatus((e&&e.message)||String(e),'error');document.getElementById('loading').hidden=true;}

@@ -1151,13 +1151,17 @@
       applyReviewFilter();
     }
 
-    function isBlockingIssue(item) {
-      if (!item.include) return false;
+    function isActiveIssue(item) {
+      if (!item) return false;
       if (['PARSE_ERROR','NOT_FOUND','ERROR'].includes(item.status)) return true;
       if (item.status === 'AMBIGUOUS' && !item.selectedProduct) return true;
       if (item.value === null || item.value === '' || !Number.isFinite(Number(item.value))) return true;
       if (item.requiresLocation && !item.location) return true;
       return false;
+    }
+
+    function isBlockingIssue(item) {
+      return Boolean(item && item.include && isActiveIssue(item));
     }
 
     function setReviewFilter(filter, button) {
@@ -1171,7 +1175,7 @@
       document.querySelectorAll('#previewBody tr').forEach(row => {
         const item = previewItems[Number(row.dataset.index)];
         let visible = true;
-        if (activeReviewFilter === 'blocking') visible = isBlockingIssue(item);
+        if (activeReviewFilter === 'blocking') visible = isActiveIssue(item);
         if (activeReviewFilter === 'ambiguous') visible = item.status === 'AMBIGUOUS';
         if (activeReviewFilter === 'duplicates') visible = Boolean(item.duplicateWarning);
         if (activeReviewFilter === 'manual') visible = Boolean(item.manualEdited) || ['MANUAL','MANUAL_EDIT'].includes(item.status);
@@ -1180,11 +1184,12 @@
     }
 
     function updateIssueCounters() {
+      const activeIssues = previewItems.filter(isActiveIssue).length;
       const blocking = previewItems.filter(isBlockingIssue).length;
       const ambiguous = previewItems.filter(x=>x.status==='AMBIGUOUS').length;
       const duplicateGroups = new Set(previewItems.filter(x=>x.duplicateWarning).map(x=>[x.selectedProduct,x.productType,x.location,Number.isInteger(Number(x.value))?'WHOLE':'WEIGHT'].join('|'))).size;
       const manual = previewItems.filter(x=>x.manualEdited || ['MANUAL','MANUAL_EDIT'].includes(x.status)).length;
-      document.getElementById('blockingCount').textContent = blocking;
+      document.getElementById('blockingCount').textContent = activeIssues;
       document.getElementById('ambiguousCount').textContent = ambiguous;
       document.getElementById('duplicateCount').textContent = duplicateGroups;
       document.getElementById('manualCount').textContent = manual;
@@ -1197,7 +1202,7 @@
     }
 
     function showNextBlockingIssue() {
-      const rows = [...document.querySelectorAll('#previewBody tr')].filter(row=>isBlockingIssue(previewItems[Number(row.dataset.index)]));
+      const rows = [...document.querySelectorAll('#previewBody tr')].filter(row=>isActiveIssue(previewItems[Number(row.dataset.index)]));
       if (!rows.length) { setFooterMessage('Brak aktywnych błędów. Import jest gotowy do zapisu.','success'); return; }
       setReviewFilter('blocking', document.querySelector('[data-filter="blocking"]'));
       const row = rows[nextIssueCursor % rows.length]; nextIssueCursor++;

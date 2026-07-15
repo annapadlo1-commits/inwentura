@@ -409,6 +409,14 @@ function createFinalInventoryArchive_(exportId) {
   return name;
 }
 
+function getOrCreateExportHistorySheet_() {
+  const sheet = getOrCreateConfiguredSheet_(CONFIG.SHEETS.EXPORT_HISTORY);
+  const headers = ['Export ID', 'Session ID', 'Rozpoczęto', 'Zakończono', 'Użytkownik', 'Liczba pozycji', 'Ostrzeżenia', 'Wykluczone', 'Google Sheet', 'XLSX', 'PDF', 'Arkusz archiwum', 'Notatka', 'Wersja', 'Arkusz źródłowy'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f6b26b');
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
 function appendExportHistory_(data) {
   appendApplicationEvent_('EXPORT', 'Zakończono inwentaryzację i utworzono eksport', {
     exportId:data.exportId, sessionId:data.sessionId, itemsCount:data.itemsCount,
