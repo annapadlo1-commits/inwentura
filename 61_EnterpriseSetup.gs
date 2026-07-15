@@ -16,7 +16,6 @@ function enterpriseSetup() {
     getOrCreateNewProductsSheet_();
     ensureActiveInventorySession_();
     repairDictionaryCategoriesFromInventory();
-    cleanupLegacyInventoryProSheets_();
     applyInventoryTheme();
     applySavedWorkspaceMode();
 
@@ -29,7 +28,7 @@ function enterpriseSetup() {
     logInfo(
       'EnterpriseSetup',
       'enterpriseSetup',
-      'Inventory PRO 3.0 RC4 zostal zainicjalizowany',
+      'Inventory PRO 3.0 RC3.1 zostal zainicjalizowany',
       {
         spreadsheetName: spreadsheet.getName(),
         spreadsheetId: spreadsheet.getId()
@@ -63,17 +62,4 @@ function enterpriseSetup() {
 
     throw error;
   }
-}
-
-
-/** Ukrywa stare, zduplikowane zakładki. Nie usuwa danych automatycznie. */
-function cleanupLegacyInventoryProSheets_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ['Historia eksportow'].forEach(name => {
-    const sheet = ss.getSheetByName(name);
-    if (sheet && !sheet.isSheetHidden()) sheet.hideSheet();
-  });
-  ss.getSheets().forEach(sheet => {
-    if (/^FINAL\b/i.test(sheet.getName()) && !sheet.isSheetHidden()) sheet.hideSheet();
-  });
 }

@@ -40,13 +40,12 @@ function applyWorkspaceVisibility_(mode) {
     CONFIG.SHEETS.IMPORT_AUDIT,
     CONFIG.SHEETS.NEW_PRODUCTS,
     CONFIG.SHEETS.DATA_AUDIT,
-    CONFIG.SHEETS.HISTORY_LEGACY,
-    'Historia eksportow'
+    CONFIG.SHEETS.HISTORY_LEGACY
   ];
 
   ss.getSheets().forEach(sheet => {
     const name = sheet.getName();
-    const isArchive = /^ARCHIWUM\b/i.test(name) || /^BACKUP STYLE\b/i.test(name) || /^FINAL\b/i.test(name);
+    const isArchive = /^ARCHIWUM\b/i.test(name) || /^BACKUP STYLE\b/i.test(name);
     const shouldHide = mode === 'USER' && (technical.indexOf(name) >= 0 || isArchive);
     if (shouldHide) {
       if (!sheet.isSheetHidden()) sheet.hideSheet();

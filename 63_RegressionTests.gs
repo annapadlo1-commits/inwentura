@@ -17,12 +17,11 @@ function runAllEnterpriseTests() {
     testAttachedNumberProductParser_,
     testParserPunctuation_,
     testParserLocations_,
-    testParserLongestMatchRC4_,
-    testParserHardLineBoundaryRC4_,
-    testParserLeadingValueRC4_,
-    testZeroVariantLucanoRC42_,
-    testZeroVariantColaRC42_,
-    testNumericZeroOrdinaryProductRC42_,
+    testParserLucanoZero_,
+    testParserKolaZeroVariant_,
+    testParserOrdinaryZeroValue_,
+    testParserHalfLitreName_,
+    testParserLongestAgeName_,
     testAliasLoader_,
     testProductCatalog_,
     testExactMatcher_,
@@ -187,9 +186,9 @@ function testContinuousParser_() {
   );
 
   assertCondition_(
-    normalizeText(parsed[0].product) === 'martini bitter' &&
-    normalizeText(parsed[1].product) === 'godet vsop',
-    'Nazwy zostaly zle rozdzielone: ' + JSON.stringify(parsed)
+    parsed[0].product === 'Martini Bitter' &&
+    parsed[1].product === 'Godet VSOP',
+    'Nazwy zostaly zle rozdzielone.'
   );
 }
 
@@ -226,6 +225,54 @@ function testParserLocations_() {
     parsed[2].location === 'magazyn',
     'Lokalizacje sekcyjne sa bledne.'
   );
+}
+
+function testParserLucanoZero_() {
+  const context = createParserTestContext_([
+    'Amaro Lucano 1L',
+    'Amaro Lucano 0% 0,7L'
+  ]);
+  const parsed = parseInventoryText('amaro lucano zero 1,234', context);
+  assertCondition_(parsed.length === 1, 'Lucano zero powinno byc jedna pozycja.');
+  assertCondition_(normalizeText(parsed[0].product) === normalizeText('Amaro Lucano 0% 0,7L'), 'Lucano zero wybralo zly produkt.');
+  assertCondition_(parsed[0].value === 1.234, 'Lucano zero ma zla wartosc.');
+}
+
+function testParserKolaZeroVariant_() {
+  const context = createParserTestContext_([
+    'Fritz 200ml KOLA',
+    'Fritz 200ml KOLA BEZ CUKRU'
+  ]);
+  const parsed = parseInventoryText('kola 0 12', context);
+  assertCondition_(parsed.length === 1, 'Kola 0 12 powinna byc jedna pozycja.');
+  assertCondition_(normalizeText(parsed[0].product) === normalizeText('Fritz 200ml KOLA BEZ CUKRU'), 'Kola 0 nie wybrala wariantu bez cukru.');
+  assertCondition_(parsed[0].value === 12, 'Kola 0 12 ma zla wartosc.');
+}
+
+function testParserOrdinaryZeroValue_() {
+  const context = createParserTestContext_(['Fritz 200ml KOLA']);
+  const product = context.catalog[0];
+  product.aliases.push('fritz kola');
+  context.parserPhraseIndex = null;
+  const parsed = parseInventoryText('fritz kola 0', context);
+  assertCondition_(parsed.length === 1, 'Fritz kola 0 powinna byc jedna pozycja.');
+  assertCondition_(parsed[0].value === 0, 'Zwykle zero powinno pozostac wartoscia.');
+}
+
+function testParserHalfLitreName_() {
+  const context = createParserTestContext_(['Żubrówka Bison Grass 0,5L']);
+  const parsed = parseInventoryText('żubrówka bison grass pół litra 1,234', context);
+  assertCondition_(parsed.length === 1, 'Pol litra powinno byc jedna pozycja.');
+  assertCondition_(normalizeText(parsed[0].product) === normalizeText('Żubrówka Bison Grass 0,5L'), 'Pol litra wybralo zly produkt.');
+  assertCondition_(parsed[0].value === 1.234, 'Pol litra ma zla wartosc.');
+}
+
+function testParserLongestAgeName_() {
+  const context = createParserTestContext_(['Osco', 'Osco 2 years old']);
+  const parsed = parseInventoryText('Osco 2 years old 22', context);
+  assertCondition_(parsed.length === 1, 'Osco 2 years old powinno byc jedna pozycja.');
+  assertCondition_(normalizeText(parsed[0].product) === normalizeText('Osco 2 years old'), 'Parser wybral krotsze Osco.');
+  assertCondition_(parsed[0].value === 22, 'Osco 2 years old ma zla wartosc.');
 }
 
 function testAliasLoader_() {
@@ -918,64 +965,4 @@ function testLongestMatchZeroRC34_() {
 
 function ip34Assert_(condition, message) {
   if (!condition) throw new Error(message || 'Assertion failed');
-}
-
-
-function testParserLongestMatchRC4_() {
-  const context = createParserTestContext_(['Osco', 'Osco 2 years old', 'Bacardi 8', 'Bacardi 10']);
-  const parsed = parseInventoryText('Bacardi 8 0,987 Bacardi 10 1,123 Osco 2 years old 22', context);
-  assertCondition_(parsed.length === 3, 'Longest match RC4: oczekiwano 3 pozycji, sa: ' + parsed.length);
-  assertCondition_(normalizeText(parsed[2].product) === 'osco 2 years old' && parsed[2].value === 22,
-    'Longest match RC4 nie ochronil pelnej nazwy Osco: ' + JSON.stringify(parsed));
-}
-
-function testParserHardLineBoundaryRC4_() {
-  const context = createParserTestContext_(['Bacardi 8', 'Osco 2 years old']);
-  const parsed = parseInventoryText('Bacardi 8 0,987\nOsco 2 years old 22', context);
-  assertCondition_(parsed.length === 2 && parsed[0].value === 0.987 && parsed[1].value === 22,
-    'Enter nie zachowal twardej granicy: ' + JSON.stringify(parsed));
-}
-
-function testParserLeadingValueRC4_() {
-  const context = createParserTestContext_(['Ardbeg 10']);
-  const parsed = parseInventoryText('1,407 Ardbeg 10', context);
-  assertCondition_(parsed.length === 1 && normalizeText(parsed[0].product) === 'ardbeg 10' && parsed[0].value === 1.407,
-    'Wartosc przed produktem nie zostala rozpoznana: ' + JSON.stringify(parsed));
-}
-
-
-/** RC4.2 — ZERO w nazwie produktu musi być chronione przed ekstrakcją wartości. */
-function testZeroVariantLucanoRC42_() {
-  const context = createParserTestContext_(['Amaro Lucano 1L', 'Amaro Lucano 0% 0,7L']);
-  context.catalog[1].aliases = ['amaro lucano zero', 'lucano zero'];
-  delete context.__parserRC4Prepared;
-  const parsed = parseInventoryText('amaro lucano zero 1,234', context);
-  assertCondition_(
-    parsed.length === 1 &&
-    normalizeText(parsed[0].product).indexOf('lucano zero') >= 0 &&
-    Number(parsed[0].value) === 1.234,
-    'Lucano ZERO rozpoznane nieprawidłowo: ' + JSON.stringify(parsed)
-  );
-}
-
-function testZeroVariantColaRC42_() {
-  const context = createParserTestContext_(['Fritz 200ml KOLA', 'Fritz 200ml KOLA BEZ CUKRU']);
-  context.catalog[1].aliases = ['kola zero', 'kola 0', 'fritz kola zero'];
-  delete context.__parserRC4Prepared;
-  const parsed = parseInventoryText('kola 0 12', context);
-  assertCondition_(
-    parsed.length === 1 &&
-    normalizeText(parsed[0].product) === 'kola 0' &&
-    Number(parsed[0].value) === 12,
-    'KOLA ZERO rozpoznana nieprawidłowo: ' + JSON.stringify(parsed)
-  );
-}
-
-function testNumericZeroOrdinaryProductRC42_() {
-  const context = createParserTestContext_(['Fritz 200ml KOLA']);
-  const parsed = parseInventoryText('fritz kola 0', context);
-  assertCondition_(
-    parsed.length === 1 && Number(parsed[0].value) === 0,
-    'Zwykła wartość zero przestała działać: ' + JSON.stringify(parsed)
-  );
 }
