@@ -1,13 +1,13 @@
 const CONFIG = Object.freeze({
   EDITION: 'Production Edition',
-  RELEASE_CHANNEL: 'RC4.1',
+  RELEASE_CHANNEL: 'RC4.2',
   LOCATION: Object.freeze({
     ID: 'PAWILONY',
     NAME: 'PAWILONY',
     NUMBER: 1,
     NEXT_LOCATION: 'KRUCZA'
   }),
-  VERSION: '3.0.0 RC4.1',
+  VERSION: '3.0.0 RC4.2',
   SHEETS: {
     INVENTORY: 'Inwentura',
     DICTIONARY: 'Slownik',
