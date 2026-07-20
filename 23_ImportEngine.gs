@@ -11,9 +11,13 @@ function analyzeImportText(inputText) {
     throw new Error('Wklej tekst inwentaryzacji.');
   }
 
+  const contextStartedAt = Date.now();
   const runtimeContext = buildRuntimeContext_();
+  const contextReadyAt = Date.now();
   const qualitySettings = loadQualitySettings_();
+  const parseStartedAt = Date.now();
   const parsedItems = parseInventoryText(text, runtimeContext);
+  const parsedAt = Date.now();
 
   const items = parsedItems.map((parsedItem, index) => {
     if (
@@ -102,28 +106,145 @@ function analyzeImportText(inputText) {
     };
   });
 
+  annotatePreviousInventoryValues_(items, runtimeContext);
   annotatePreviewDuplicates_(items, qualitySettings);
+  const outputItems = CONFIG.REVIEW && CONFIG.REVIEW.AUTO_MERGE_DUPLICATES
+    ? mergePreviewDuplicates_(items)
+    : items;
+  outputItems.forEach((item, index) => item.id = index + 1);
+  const completedAt = Date.now();
 
   return {
     success: true,
-    itemCount: items.length,
-    readyCount: items.filter(item =>
+    itemCount: outputItems.length,
+    sourceItemCount: items.length,
+    readyCount: outputItems.filter(item =>
       ['EXACT', 'ALIAS', 'VARIANT', 'SMART', 'AUTO'].includes(item.status)
     ).length,
-    ambiguousCount: items.filter(
+    ambiguousCount: outputItems.filter(
       item => item.status === 'AMBIGUOUS'
     ).length,
-    errorCount: items.filter(item =>
+    errorCount: outputItems.filter(item =>
       ['PARSE_ERROR', 'NOT_FOUND'].includes(item.status)
     ).length,
-    locationCount: items.filter(
+    locationCount: outputItems.filter(
       item => item.requiresLocation
     ).length,
     durationMs: Date.now() - startedAt,
-    duplicateGroupCount: countDuplicateGroups_(items),
+    performance: {
+      contextMs: contextReadyAt - contextStartedAt,
+      parseMs: parsedAt - parseStartedAt,
+      enrichMs: completedAt - parsedAt,
+      totalMs: completedAt - startedAt,
+      matcher: runtimeContext.performanceStats || {}
+    },
+    duplicateGroupCount: outputItems.filter(item => item.autoMerged).length || countDuplicateGroups_(items),
     qualitySettings: qualitySettings,
-    items: items
+    resolverData: buildProductResolverPayload_(runtimeContext, ''),
+    items: outputItems
   };
+}
+
+function annotatePreviousInventoryValues_(items, runtimeContext) {
+  const context = runtimeContext || buildRuntimeContext_();
+  const sheet = getSheetByConfiguredName_(CONFIG.SHEETS.INVENTORY);
+  if (!sheet || !items || !items.length) return;
+  const productIndex = context.productIndex || {};
+  const requests = [];
+  const columns = {};
+
+  items.forEach((item, index) => {
+    if (!item.selectedProduct || !Number.isFinite(Number(item.value))) return;
+    const product = productIndex[normalizeText(item.selectedProduct)];
+    if (!product || !product.inventoryRow) return;
+    const column = resolveTargetColumn_(product, Number(item.value), item.location || '');
+    if (!column) return;
+    columns[column] = true;
+    requests.push({ index: index, row: product.inventoryRow, column: column });
+  });
+
+  const buffers = {};
+  const lastRow = sheet.getLastRow();
+  Object.keys(columns).forEach(column => {
+    buffers[column] = sheet.getRange(column + '1:' + column + lastRow).getValues();
+  });
+
+  requests.forEach(request => {
+    const raw = buffers[request.column] && buffers[request.column][request.row - 1]
+      ? buffers[request.column][request.row - 1][0]
+      : null;
+    if (raw === '' || raw === null || raw === undefined) return;
+    const previous = Number(raw);
+    if (!Number.isFinite(previous)) return;
+    const item = items[request.index];
+    const current = Number(item.value);
+    const delta = current - previous;
+    const percent = previous === 0 ? null : (delta / Math.abs(previous)) * 100;
+    item.previousValue = previous;
+    item.previousDelta = delta;
+    item.previousChangePercent = percent;
+    const largeAbsolute = Math.abs(delta) >= Number(CONFIG.REVIEW.PREVIOUS_CHANGE_WARNING_ABSOLUTE || 10);
+    const largePercent = percent !== null && Math.abs(percent) >= Number(CONFIG.REVIEW.PREVIOUS_CHANGE_WARNING_PERCENT || 250);
+    item.previousValueWarning = Boolean(largeAbsolute && (largePercent || previous === 0));
+    if (item.previousValueWarning) {
+      item.qualityWarning = true;
+      item.qualityLevel = item.qualityLevel === 'ERROR' ? 'ERROR' : 'WARNING';
+      item.qualityFlags = (item.qualityFlags || []).concat(['DUZA_ZMIANA_WZGLEDEM_POPRZEDNIEJ']);
+      item.message = [item.message, 'Duża zmiana: było ' + previous + ', jest ' + current]
+        .filter(Boolean).join(' | ');
+    }
+  });
+}
+
+function mergePreviewDuplicates_(items) {
+  const groups = {};
+  const groupedIndexes = {};
+  (items || []).forEach((item, index) => {
+    if (!item.include || !item.selectedProduct || !Number.isFinite(Number(item.value)) ||
+        ['PARSE_ERROR', 'NOT_FOUND', 'ERROR', 'AMBIGUOUS'].includes(item.status)) return;
+    const key = buildPreviewDuplicateKey_(item);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push({ item: item, index: index });
+  });
+
+  const mergedByFirstIndex = {};
+  Object.keys(groups).forEach(key => {
+    const group = groups[key];
+    if (group.length < 2) return;
+    const sourceItems = group.map(entry => JSON.parse(JSON.stringify(entry.item)));
+    const merged = JSON.parse(JSON.stringify(group[0].item));
+    merged.value = sourceItems.reduce((sum, item) => sum + Number(item.value), 0);
+    merged.originalInput = sourceItems.map(item => item.originalInput).join(' + ');
+    merged.autoMerged = true;
+    merged.sourceItems = sourceItems;
+    merged.duplicateCount = sourceItems.length;
+    merged.duplicateValues = sourceItems.map(item => Number(item.value));
+    merged.duplicateInputs = sourceItems.map(item => item.originalInput || item.parsedProduct || '');
+    merged.duplicateTotal = merged.value;
+    merged.duplicateWarning = true;
+    if (Number.isFinite(Number(merged.previousValue))) {
+      merged.previousValue = Number(merged.previousValue);
+      merged.previousDelta = merged.value - merged.previousValue;
+      merged.previousChangePercent = merged.previousValue === 0
+        ? null
+        : (merged.previousDelta / Math.abs(merged.previousValue)) * 100;
+      const largeAbsolute = Math.abs(merged.previousDelta) >= Number(CONFIG.REVIEW.PREVIOUS_CHANGE_WARNING_ABSOLUTE || 10);
+      const largePercent = merged.previousChangePercent !== null &&
+        Math.abs(merged.previousChangePercent) >= Number(CONFIG.REVIEW.PREVIOUS_CHANGE_WARNING_PERCENT || 250);
+      merged.previousValueWarning = Boolean(largeAbsolute && (largePercent || merged.previousValue === 0));
+    }
+    merged.baseMessage = 'Połączono automatycznie ' + sourceItems.length + ' wpisy';
+    merged.message = merged.baseMessage;
+    mergedByFirstIndex[group[0].index] = merged;
+    group.forEach(entry => groupedIndexes[entry.index] = true);
+  });
+
+  const output = [];
+  (items || []).forEach((item, index) => {
+    if (mergedByFirstIndex[index]) output.push(mergedByFirstIndex[index]);
+    else if (!groupedIndexes[index]) output.push(item);
+  });
+  return output;
 }
 
 function createReadyImportItem_(

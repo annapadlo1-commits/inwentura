@@ -33,7 +33,7 @@ function getAliasManagerData() {
 
       const lastRow = sheet.getLastRow();
       const values = lastRow >= 2
-        ? sheet.getRange(2, 1, lastRow - 1, 2).getDisplayValues()
+        ? sheet.getRange(2, 1, lastRow - 1, 3).getValues()
         : [];
 
       const aliases = [];
@@ -58,7 +58,10 @@ function getAliasManagerData() {
           type: target ? target.type : '',
           isExactName: Boolean(target && aliasKey === productKey),
           conflict: false,
-          conflictTargets: []
+          conflictTargets: [],
+          createdAt: row[2] instanceof Date && !Number.isNaN(row[2].getTime())
+            ? row[2].toISOString()
+            : ''
         };
 
         aliases.push(record);
@@ -85,6 +88,9 @@ function getAliasManagerData() {
         }
       });
 
+      const lastAliasIndex = values.reduce((last, row, index) =>
+        (String(row[0] || '').trim() || String(row[1] || '').trim()) ? index : last, -1);
+
       aliases.sort((a, b) => {
         if (a.conflict !== b.conflict) return a.conflict ? -1 : 1;
         if (a.productExists !== b.productExists) return a.productExists ? 1 : -1;
@@ -108,7 +114,8 @@ function getAliasManagerData() {
           }).length,
           orphaned: aliases.filter(item => !item.productExists).length,
           inactiveTargets: aliases.filter(item => item.productExists && !item.productActive).length,
-          exactNameAliases: aliases.filter(item => item.isExactName).length
+          exactNameAliases: aliases.filter(item => item.isExactName).length,
+          blankRows: Math.max(0, lastAliasIndex + 1 - aliases.length)
         }
       };
     },
@@ -154,7 +161,7 @@ function addAliasFromAliasManager(payload) {
         CONFIG.DICTIONARY.ALIAS_COLUMN,
         CONFIG.DICTIONARY.FIRST_DATA_ROW
       );
-      sheet.getRange(row, 1, 1, 2).setValues([[data.alias, data.product]]);
+      sheet.getRange(row, 1, 1, 3).setValues([[data.alias, data.product, new Date()]]);
       invalidateProductCatalogCache_();
 
       logInfo('AliasManager', 'addAliasFromAliasManager', 'Dodano alias', data);
@@ -237,7 +244,7 @@ function deleteAliasFromAliasManager(row) {
       const product = String(values[1] || '').trim();
       if (!alias && !product) throw new Error('Alias jest juz pusty.');
 
-      sheet.getRange(rowNumber, 1, 1, 2).clearContent();
+      sheet.getRange(rowNumber, 1, 1, 3).clearContent();
       compactAliasDictionary_();
       invalidateProductCatalogCache_();
 
@@ -269,7 +276,7 @@ function deleteDuplicateAliasesFromAliasManager() {
         else seen[key] = item.row;
       });
 
-      rowsToClear.forEach(row => sheet.getRange(row, 1, 1, 2).clearContent());
+      rowsToClear.forEach(row => sheet.getRange(row, 1, 1, 3).clearContent());
       compactAliasDictionary_();
       if (rowsToClear.length) invalidateProductCatalogCache_();
 
@@ -319,12 +326,15 @@ function loadAliasRowsForManager_() {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  return sheet.getRange(2, 1, lastRow - 1, 2).getDisplayValues()
+  return sheet.getRange(2, 1, lastRow - 1, 3).getValues()
     .map((row, index) => ({
       row: index + 2,
       alias: String(row[0] || '').trim(),
       normalizedAlias: normalizeText(row[0]),
-      product: String(row[1] || '').trim()
+      product: String(row[1] || '').trim(),
+      createdAt: row[2] instanceof Date && !Number.isNaN(row[2].getTime())
+        ? row[2].toISOString()
+        : ''
     }))
     .filter(item => item.alias || item.product);
 }
@@ -332,20 +342,58 @@ function loadAliasRowsForManager_() {
 
 function compactAliasDictionary() {
   return runSafely_('AliasManager','compactAliasDictionary',function(){
-    return compactAliasDictionary_();
+    return compactAliasDictionary_('chronological');
   },'Nie udało się uporządkować aliasów.');
 }
 
-function compactAliasDictionary_() {
+function organizeAliasDictionary(orderMode) {
+  return runSafely_('AliasManager','organizeAliasDictionary',function(){
+    return compactAliasDictionary_(orderMode || 'chronological');
+  },'Nie udało się uporządkować aliasów.');
+}
+
+function compactAliasDictionary_(orderMode) {
   const sheet = getDictionarySheet_();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { aliases:0, removedBlankRows:0 };
-  const range = sheet.getRange(2,1,lastRow-1,2);
+  const range = sheet.getRange(2,1,lastRow-1,3);
   const values = range.getValues();
-  const rows = values.filter(row => String(row[0]||'').trim() && String(row[1]||'').trim());
+  const records = values.map((row, index) => ({
+    values: [row[0], row[1], row[2]],
+    alias: String(row[0] || '').trim(),
+    product: String(row[1] || '').trim(),
+    createdAt: row[2] instanceof Date && !Number.isNaN(row[2].getTime()) ? row[2] : null,
+    originalIndex: index
+  })).filter(record => record.alias || record.product);
+  const mode = ['chronological','product','alias'].includes(String(orderMode || '').toLowerCase())
+    ? String(orderMode).toLowerCase()
+    : 'chronological';
+  const rows = sortAliasRecordsForManager_(records, mode).map(record => record.values);
   const removed = values.length - rows.length;
   range.clearContent();
-  if (rows.length) sheet.getRange(2,1,rows.length,2).setValues(rows);
+  if (rows.length) sheet.getRange(2,1,rows.length,3).setValues(rows);
+  if (!String(sheet.getRange(1,3).getValue() || '').trim()) sheet.getRange(1,3).setValue('Dodano');
   invalidateProductCatalogCache_();
-  return { aliases: rows.length, removedBlankRows: removed, message:'Uporządkowano '+rows.length+' aliasów. Usunięto pustych wierszy: '+removed+'.' };
+  const labels = { chronological:'kolejność dodania', product:'produkt → alias', alias:'alias A–Z' };
+  return { aliases: rows.length, removedBlankRows: removed, orderMode:mode,
+    message:'Uporządkowano '+rows.length+' aliasów ('+labels[mode]+'). Usunięto pustych wierszy: '+removed+'.' };
+}
+
+function sortAliasRecordsForManager_(records, mode) {
+  return (records || []).slice().sort((a, b) => {
+    if (mode === 'product') {
+      return a.product.localeCompare(b.product, 'pl', { sensitivity:'base' }) ||
+        a.alias.localeCompare(b.alias, 'pl', { sensitivity:'base' }) ||
+        a.originalIndex - b.originalIndex;
+    }
+    if (mode === 'alias') {
+      return a.alias.localeCompare(b.alias, 'pl', { sensitivity:'base' }) ||
+        a.product.localeCompare(b.product, 'pl', { sensitivity:'base' }) ||
+        a.originalIndex - b.originalIndex;
+    }
+    if (!a.createdAt && !b.createdAt) return a.originalIndex - b.originalIndex;
+    if (!a.createdAt) return -1;
+    if (!b.createdAt) return 1;
+    return a.createdAt.getTime() - b.createdAt.getTime() || a.originalIndex - b.originalIndex;
+  });
 }

@@ -15,6 +15,7 @@ function recognizeProduct_(inputName, runtimeContext) {
   }
 
   if (context.recognitionMemo && context.recognitionMemo[memoKey]) {
+    if (context.performanceStats) context.performanceStats.memoHits++;
     return context.recognitionMemo[memoKey];
   }
 
@@ -37,7 +38,14 @@ function recognizeProduct_(inputName, runtimeContext) {
 
   if (!result) {
     const shortlist = getRecognitionShortlist_(originalInput, context);
-    const scored = shortlist
+    const finalistLimit = (CONFIG.PERFORMANCE && CONFIG.PERFORMANCE.LEVENSHTEIN_FINALISTS) || 5;
+    const finalists = shortlist
+      .map(product => ({ product: product, cheapScore: cheapRecognitionCandidateScore_(originalInput, product, context) }))
+      .sort((a, b) => b.cheapScore - a.cheapScore || a.product.name.localeCompare(b.product.name))
+      .slice(0, finalistLimit)
+      .map(item => item.product);
+    if (context.performanceStats) context.performanceStats.levenshteinCandidates += finalists.length;
+    const scored = finalists
       .map(product => scoreRecognitionCandidate_(originalInput, product))
       .filter(candidate => candidate.score >= 45)
       .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name));
@@ -65,26 +73,65 @@ function getRecognitionShortlist_(inputName, context) {
   const normalized = normalizeRecognitionForScore_(inputName);
   const first = normalized.split(' ').filter(Boolean)[0] || '';
   const indexed = first && context.firstTokenIndex ? context.firstTokenIndex[first] : null;
-  if (indexed && indexed.length) return indexed;
+  const limit = (CONFIG.PERFORMANCE && CONFIG.PERFORMANCE.FUZZY_SHORTLIST_SIZE) || 20;
+  if (indexed && indexed.length && indexed.length <= limit) return indexed;
 
-  // Literowka w pierwszym tokenie: wybierz tylko grupy o podobnym początku.
-  const keys = Object.keys(context.firstTokenIndex || {});
-  let candidates = [];
-  keys.forEach(key => {
-    if (calculateStringSimilarity_(first, key) >= 0.68) {
-      candidates = candidates.concat(context.firstTokenIndex[key] || []);
-    }
-  });
-  if (candidates.length) {
-    const unique = {};
-    return candidates.filter(product => {
-      const key = normalizeText(product.name);
-      if (unique[key]) return false;
-      unique[key] = true;
-      return true;
-    });
+  if (!context.trigramRecognitionIndex) {
+    context.trigramRecognitionIndex = buildTrigramRecognitionIndex_(context.catalog || []);
   }
-  return context.catalog || [];
+  const counts = {};
+  const products = {};
+  const queryGrams = recognitionTrigrams_(normalized)
+    .map(gram => ({ gram: gram, size: (context.trigramRecognitionIndex[gram] || []).length }))
+    .filter(item => item.size > 0)
+    .sort((a, b) => a.size - b.size || a.gram.localeCompare(b.gram))
+    .slice(0, 8)
+    .map(item => item.gram);
+  queryGrams.forEach(gram => {
+    (context.trigramRecognitionIndex[gram] || []).forEach(product => {
+      const key = normalizeText(product.name);
+      products[key] = product;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+  });
+  const shortlisted = Object.keys(counts)
+    .sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
+    .slice(0, limit)
+    .map(key => products[key]);
+  if (context.performanceStats) {
+    context.performanceStats.fuzzyQueries++;
+    context.performanceStats.fuzzyShortlisted += shortlisted.length;
+  }
+  return shortlisted.length ? shortlisted : (context.catalog || []).slice(0, limit);
+}
+
+function cheapRecognitionCandidateScore_(inputName, product, context) {
+  const input = normalizeRecognitionForScore_(inputName);
+  const inputGrams = recognitionTrigrams_(input);
+  const inputNumbers = input.match(/\d+(?:[.,]\d+)?/g) || [];
+  const inputSet = {};
+  inputGrams.forEach(gram => inputSet[gram] = true);
+  const productKey = normalizeText(product.name);
+  const preparedSources = context.recognitionSourceTrigrams && context.recognitionSourceTrigrams[productKey];
+  const sources = preparedSources ||
+    [product.name].concat(product.aliases || []).map(normalizeRecognitionForScore_).map(value => ({
+      value: value,
+      grams: recognitionTrigrams_(value),
+      numbers: value.match(/\d+(?:[.,]\d+)?/g) || []
+    }));
+  let best = 0;
+  sources.forEach(source => {
+    const grams = source.grams;
+    let overlap = 0;
+    grams.forEach(gram => { if (inputSet[gram]) overlap++; });
+    const denominator = Math.max(1, inputGrams.length + grams.length - overlap);
+    const sameNumbers = inputNumbers.length && source.numbers.length &&
+      inputNumbers.join('|') === source.numbers.join('|');
+    const conflictingNumbers = inputNumbers.length && source.numbers.length && !sameNumbers;
+    const numericBonus = sameNumbers ? 2 : (conflictingNumbers ? -2 : 0);
+    best = Math.max(best, overlap / denominator + numericBonus);
+  });
+  return best;
 }
 
 function recognitionResult_(matched, status, input, product, candidates, score, message) {

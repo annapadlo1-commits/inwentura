@@ -61,37 +61,43 @@ function clearCurrentInventory() {
 function clearCurrentInventoryData_(sheet) {
   const products = buildProductCatalog();
   const a1Set = {};
+  const prepared = [];
 
   products.forEach(product => {
     if (!product.inventoryRow) return;
 
     const columns = product.columns || {};
+    const type = String(product.type || '').trim().toUpperCase();
+    const candidates = type === CONFIG.PRODUCT_TYPES.LOCATION
+      ? [columns.warehouse, columns.darkroom, columns.fridges]
+      : [columns.weight, columns.quantity];
 
-    if (product.type === CONFIG.PRODUCT_TYPES.LOCATION) {
-      [columns.warehouse, columns.darkroom, columns.fridges]
-        .filter(Boolean)
-        .forEach(column => {
-          a1Set[column + product.inventoryRow] = true;
-        });
-    } else {
-      [columns.weight, columns.quantity]
-        .filter(Boolean)
-        .forEach(column => {
-          a1Set[column + product.inventoryRow] = true;
-        });
-    }
+    candidates.filter(Boolean).forEach(column => {
+      const safeColumn = assertSafeInventoryTargetColumn_(product, column);
+      const a1 = safeColumn + product.inventoryRow;
+      if (a1Set[a1]) return;
+      const range = sheet.getRange(a1);
+      const formula = range.getFormula();
+      if (formula) {
+        throw new Error(
+          'Reset inwentaryzacji zablokowany: komórka wejściowa ' + a1 +
+          ' zawiera formułę. Sprawdź konfigurację produktu „' + product.name + '”.'
+        );
+      }
+      a1Set[a1] = true;
+      prepared.push({ a1: a1, range: range, previousValue: range.getValue() });
+    });
   });
 
-  const a1List = Object.keys(a1Set);
-
-  if (a1List.length) {
-    sheet.getRangeList(a1List).clearContent();
+  if (prepared.length) {
+    sheet.getRangeList(prepared.map(item => item.a1)).clearContent();
   }
 
   SpreadsheetApp.flush();
 
   return {
-    clearedCells: a1List.length
+    clearedCells: prepared.length,
+    clearedAddresses: prepared.map(item => item.a1)
   };
 }
 

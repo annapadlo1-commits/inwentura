@@ -1,6 +1,6 @@
 /**
- * Inventory PRO Enterprise v2.1
- * Konfiguracja arkuszy Enterprise.
+ * Inventory PRO 4.3.6 SAFE MODE
+ * Konfiguracja PAWILONÓW z release gate dla kontraktu formuł.
  */
 function enterpriseSetup() {
   const startedAt = Date.now();
@@ -15,38 +15,78 @@ function enterpriseSetup() {
     ensureQualitySettingsSheet_();
     getOrCreateNewProductsSheet_();
     ensureActiveInventorySession_();
+
+    const formulaAuditBefore = auditInventoryFormulaCoverage_();
+    writeInventoryFormulaAuditReport_(formulaAuditBefore);
+    if (
+      formulaAuditBefore.hasBlockingConflicts &&
+      (!CONFIG.FORMULA_POLICY || CONFIG.FORMULA_POLICY.BLOCK_SETUP_ON_CONFLICT !== false)
+    ) {
+      throw new Error(
+        'Enterprise Setup zablokowany: wykryto ' + formulaAuditBefore.conflictFormulaCells +
+        ' konfliktowych komórek formuł. Sprawdź ukrytą zakładkę „' +
+        CONFIG.SHEETS.FORMULA_AUDIT + '”. Przykłady: ' +
+        formatFormulaConflictCells_(formulaAuditBefore, 8) + '.'
+      );
+    }
+
+
+    const formulaRepair = {
+      changedCells: 0,
+      backupSheetName: '',
+      audit: formulaAuditBefore
+    };
+
+    if (!formulaAuditBefore.safe) {
+      throw new Error(
+        'Enterprise Setup przerwany bez modyfikowania formuł. ' +
+        'Automatyczna naprawa jest wyłączona w wersji SAFE MODE. ' +
+        'Sprawdź raport w zakładce „' + CONFIG.SHEETS.FORMULA_AUDIT + '”.'
+      );
+    }
+
     repairDictionaryCategoriesFromInventory();
     applyInventoryTheme();
     applySavedWorkspaceMode();
 
-    let reportSheet = spreadsheet.getSheetByName(CONFIG.SHEETS.REPORT);
-    if (!reportSheet) {
-      reportSheet = spreadsheet.insertSheet(CONFIG.SHEETS.REPORT);
+    const validation = buildValidationReport_();
+    if (!validation.valid) {
+      throw new Error('Enterprise Setup zakończył się błędami walidacji:\n- ' + validation.errors.join('\n- '));
     }
-    ensureReportHeaders_(reportSheet);
+
+    const result = {
+      success: true,
+      version: CONFIG.VERSION,
+      repairedFormulaCells: formulaRepair.changedCells,
+      formulaBackupSheet: formulaRepair.backupSheetName,
+      formulasSafe: formulaRepair.audit && formulaRepair.audit.safe,
+      automaticFormulaRepairEnabled: false,
+      validationWarnings: validation.warnings.length,
+      durationMs: Date.now() - startedAt
+    };
 
     logInfo(
       'EnterpriseSetup',
       'enterpriseSetup',
-      'Inventory PRO 4.0 zostal zainicjalizowany',
+      'Inventory PRO ' + CONFIG.VERSION + ' został zainicjalizowany',
       {
         spreadsheetName: spreadsheet.getName(),
-        spreadsheetId: spreadsheet.getId()
+        spreadsheetId: spreadsheet.getId(),
+        repairedFormulaCells: result.repairedFormulaCells,
+        formulaBackupSheet: result.formulaBackupSheet,
+        formulasSafe: result.formulasSafe,
+        automaticFormulaRepairEnabled: result.automaticFormulaRepairEnabled,
+        validationWarnings: result.validationWarnings
       },
-      Date.now() - startedAt
+      result.durationMs
     );
 
     spreadsheet.toast(
-      'Enterprise v' + CONFIG.VERSION + ' gotowy.',
+      'PAWILONY v' + CONFIG.VERSION + ' gotowe.',
       'Inventory PRO',
       8
     );
-
-    return {
-      success: true,
-      version: CONFIG.VERSION,
-      durationMs: Date.now() - startedAt
-    };
+    return result;
   } catch (error) {
     try {
       logError(
@@ -59,7 +99,6 @@ function enterpriseSetup() {
     } catch (loggingError) {
       console.error(loggingError);
     }
-
     throw error;
   }
 }

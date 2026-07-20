@@ -3,6 +3,7 @@
 <head>
   <base target="_top">
   <?!= includeInventoryUiTheme_(); ?>
+  <?!= includeInventoryHelp_(); ?>
   <style>
     *{box-sizing:border-box}body{margin:0;background:#f7f7f5;overflow:hidden}.dash{height:100vh;display:flex;flex-direction:column}
     .toolbar{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--ip-border)}
@@ -17,9 +18,9 @@
     @media(max-width:950px){.kpis{grid-template-columns:repeat(3,1fr)}.grid,.grid.equal{grid-template-columns:1fr}.types{grid-template-columns:1fr}.bar-row{grid-template-columns:120px 1fr 70px}}
   </style>
 </head>
-<body>
+<body data-help-view="dashboard">
 <div class="dash">
-  <div class="ip-app-header"><div class="ip-app-logo pizza">🍕</div><div><div class="ip-app-title">Inventory PRO — Dashboardy managera</div><div class="ip-app-subtitle" id="subtitle">Końcowy obraz inwentaryzacji z Reporting Engine</div></div></div>
+  <div class="ip-app-header"><div class="ip-app-logo pizza">🍕</div><div><div class="ip-app-title">Inventory PRO — dashboard inwentaryzacji</div><div class="ip-app-subtitle" id="subtitle">Czytelne podsumowanie wybranego stanu</div></div></div>
   <div class="toolbar"><label for="source">Arkusz:</label><select id="source" onchange="loadDashboard()"></select><span class="meta" id="meta"></span><span class="spacer"></span><button class="secondary" onclick="loadDashboard()">Odśwież</button><button class="primary" onclick="google.script.host.close()">Zamknij</button></div>
   <div class="tabs"><button class="tab active" data-view="overview">Podsumowanie</button><button class="tab" data-view="categoriesView">Kategorie</button><button class="tab" data-view="quality">Jakość danych</button></div>
   <div class="content">

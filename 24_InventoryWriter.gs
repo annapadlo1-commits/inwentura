@@ -1,6 +1,7 @@
 /**
- * Inventory PRO Enterprise v2.1.3 Recovery
- * Szybki zapis kolumnami zamiast setValue dla kazdej pozycji.
+ * Inventory PRO 4.3.4 — bezpieczny, selektywny zapis PAWILONÓW.
+ * Odczyt buforów służy wyłącznie do obliczania sum, a zapis obejmuje tylko
+ * konkretne komórki wejściowe. Kolumny formuł są chronione kontraktem typu.
  */
 
 function saveImportItems(items) {
@@ -12,32 +13,18 @@ function saveImportItems(items) {
   const startedAt = Date.now();
   const importId = createUniqueId_('IMP');
   let inventorySheet = null;
-  let originalColumnBuffers = null;
-  let inventoryLastRow = 0;
+  let writePlan = [];
   let inventoryWritten = false;
 
   try {
     lock.waitLock(30000);
-
-    const sheet = getSheetByConfiguredName_(
-      CONFIG.SHEETS.INVENTORY
-    );
+    const sheet = getSheetByConfiguredName_(CONFIG.SHEETS.INVENTORY);
     inventorySheet = sheet;
+    if (!sheet) throw new Error('Nie znaleziono arkusza: ' + CONFIG.SHEETS.INVENTORY);
 
-    if (!sheet) {
-      throw new Error(
-        'Nie znaleziono arkusza: ' +
-        CONFIG.SHEETS.INVENTORY
-      );
-    }
-
-    // Nowy produkt dodany z okna importu zmienia indeks wierszy całego katalogu.
-    // Cache musi zostać odświeżony bezpośrednio przed zapisem, inaczej zapis może
-    // korzystać ze starego katalogu i pominąć wartość nowo utworzonego produktu.
     const containsNewProduct = items.some(item =>
       item && item.include && String(item.status || '').toUpperCase() === 'NEW_PRODUCT'
     );
-
     if (containsNewProduct) {
       SpreadsheetApp.flush();
       invalidateProductCatalogCache_();
@@ -47,19 +34,8 @@ function saveImportItems(items) {
     const productIndex = runtimeContext.productIndex;
     const qualitySettings = loadQualitySettings_();
     const lastRow = sheet.getLastRow();
-
-    const usedColumns = collectUsedTargetColumns_(
-      items,
-      productIndex
-    );
-
-    const columnBuffers = loadColumnBuffers_(
-      sheet,
-      usedColumns,
-      lastRow
-    );
-    originalColumnBuffers = cloneColumnBuffers_(columnBuffers);
-    inventoryLastRow = lastRow;
+    const usedColumns = collectUsedTargetColumns_(items, productIndex);
+    const columnBuffers = loadColumnBuffers_(sheet, usedColumns, lastRow);
 
     const results = [];
     let savedCount = 0;
@@ -67,47 +43,32 @@ function saveImportItems(items) {
 
     items.forEach(item => {
       const result = prepareSingleImportWrite_(
-        item,
-        productIndex,
-        columnBuffers,
-        qualitySettings
+        item, productIndex, columnBuffers, qualitySettings
       );
-
       result.importId = importId;
       result.location = item.location || '';
       results.push(result);
-
-      if (result.saved) {
-        savedCount++;
-      } else {
-        skippedCount++;
-      }
+      if (result.saved) savedCount++;
+      else skippedCount++;
     });
 
     annotateSavedDuplicateResults_(results, qualitySettings);
-
-    inventoryWritten = true;
-    writeColumnBuffers_(
-      sheet,
-      columnBuffers,
-      lastRow
-    );
+    writePlan = buildSparseWritePlan_(results);
+    // Flaga jest ustawiana przed pierwszym setValue. Dzięki temu błąd
+    // pojedynczego zapisu w połowie planu nadal uruchomi selektywny rollback.
+    inventoryWritten = writePlan.length > 0;
+    writeSparseWritePlan_(sheet, writePlan);
 
     SpreadsheetApp.flush();
-    appendImportHistory_(importId, results);
-    appendImportReport_(importId, results);
+    appendImportHistory_(importId, results, sheet.getName());
 
     let learnedAliasesCount = 0;
-
     try {
-      learnedAliasesCount = saveAliasesBatch_(
-        collectAliasSuggestions_(items)
-      );
+      learnedAliasesCount = saveAliasesBatch_(collectAliasSuggestions_(items));
     } catch (aliasError) {
       logWarning(
-        'InventoryWriter',
-        'saveImportItems',
-        'Import zapisano, ale nie udalo sie zapisac aliasow.',
+        'InventoryWriter', 'saveImportItems',
+        'Import zapisano, ale nie udało się zapisać aliasów.',
         { message: normalizeError_(aliasError).message }
       );
     }
@@ -124,56 +85,124 @@ function saveImportItems(items) {
       durationMs: Date.now() - startedAt
     };
 
-    logInfo(
-      'InventoryWriter',
-      'saveImportItems',
-      'Import zapisany',
-      {
-        importId: importId,
-        savedCount: savedCount,
-        skippedCount: skippedCount
-      },
-      response.durationMs
-    );
+    logInfo('InventoryWriter', 'saveImportItems', 'Import zapisany', {
+      importId: importId,
+      savedCount: savedCount,
+      skippedCount: skippedCount,
+      changedCells: writePlan.length
+    }, response.durationMs);
 
     return response;
-
   } catch (error) {
-    if (inventoryWritten && inventorySheet && originalColumnBuffers) {
+    if (inventoryWritten && inventorySheet && writePlan.length) {
       try {
-        writeColumnBuffers_(inventorySheet, originalColumnBuffers, inventoryLastRow);
+        rollbackSparseWritePlan_(inventorySheet, writePlan);
         SpreadsheetApp.flush();
       } catch (rollbackError) {
-        logError(
-          'InventoryWriter',
-          'saveImportItems.rollback',
-          rollbackError,
-          { importId: importId },
-          0
-        );
+        logError('InventoryWriter', 'saveImportItems.rollback', rollbackError, {
+          importId: importId
+        }, 0);
       }
     }
-    logError(
-      'InventoryWriter',
-      'saveImportItems',
-      error,
-      { importId: importId },
-      Date.now() - startedAt
-    );
-
+    logError('InventoryWriter', 'saveImportItems', error, { importId: importId }, Date.now() - startedAt);
     throw error;
-
   } finally {
     lock.releaseLock();
   }
 }
 
-function cloneColumnBuffers_(buffers) {
-  const clone = {};
-  Object.keys(buffers || {}).forEach(column => {
-    clone[column] = (buffers[column] || []).map(row => [row[0]]);
+function buildSparseWritePlan_(results) {
+  const byCell = {};
+  (results || []).forEach(result => {
+    if (!result || !result.saved || !result.row || !result.column) return;
+    const column = String(result.column).toUpperCase();
+    const key = column + String(result.row);
+    if (!byCell[key]) {
+      byCell[key] = {
+        a1: key,
+        row: Number(result.row),
+        column: column,
+        previousValue: result.previousValue,
+        newValue: result.newValue,
+        product: result.product || '',
+        productType: result.productType || ''
+      };
+    } else {
+      byCell[key].newValue = result.newValue;
+    }
   });
-  return clone;
+
+  return Object.keys(byCell).map(key => byCell[key]).sort((a, b) =>
+    a.column.localeCompare(b.column) || a.row - b.row
+  );
+}
+
+function writeSparseWritePlan_(sheet, plan) {
+  const prepared = (plan || []).map(change => {
+    if (isFormulaColumnForProductType_(change.productType, change.column)) {
+      throw new Error(
+        'Zablokowano zapis do kolumny obliczeniowej ' + change.column +
+        ' dla typu ' + change.productType + ' (' + (change.product || 'produkt') + ').'
+      );
+    }
+    if (!isAllowedInputColumnForProductType_(change.productType, change.column)) {
+      throw new Error(
+        'Zablokowano zapis do niedozwolonej kolumny ' + change.column +
+        ' dla typu ' + change.productType + ' (' + (change.product || 'produkt') + ').'
+      );
+    }
+    const range = sheet.getRange(change.a1);
+    const formula = range.getFormula();
+    if (formula) {
+      throw new Error('Zablokowano zapis do komórki z formułą: ' + change.a1 + '.');
+    }
+    const liveValue = range.getValue();
+    if (!inventoryCellValuesEqual_(liveValue, change.previousValue)) {
+      throw new Error(
+        'Komórka ' + change.a1 + ' została zmieniona równolegle. ' +
+        'Import przerwano bez nadpisywania ręcznej zmiany.'
+      );
+    }
+    return { range: range, change: change };
+  });
+
+  prepared.forEach(item => item.range.setValue(item.change.newValue));
+}
+
+function rollbackSparseWritePlan_(sheet, plan) {
+  (plan || []).slice().reverse().forEach(change => {
+    const range = sheet.getRange(change.a1);
+    const liveValue = range.getValue();
+    if (inventoryCellValuesEqual_(liveValue, change.previousValue)) {
+      // Ta pozycja nie została jeszcze zapisana przed wystąpieniem błędu.
+      return;
+    }
+    if (inventoryCellValuesEqual_(liveValue, change.newValue)) {
+      if (change.previousValue === '' || change.previousValue === null || change.previousValue === undefined) {
+        range.clearContent();
+      } else {
+        range.setValue(change.previousValue);
+      }
+      return;
+    }
+    logWarning(
+      'InventoryWriter', 'rollbackSparseWritePlan_',
+      'Nie cofnięto komórki zmienionej po imporcie.',
+      { cell: change.a1, expected: change.newValue, actual: liveValue }
+    );
+  });
+}
+
+function inventoryCellValuesEqual_(left, right) {
+  const leftBlank = left === '' || left === null || left === undefined;
+  const rightBlank = right === '' || right === null || right === undefined;
+  if (leftBlank || rightBlank) return leftBlank && rightBlank;
+  if (typeof left === 'number' || typeof right === 'number') {
+    const a = Number(left);
+    const b = Number(right);
+    return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) < 0.000000001;
+  }
+  return String(left) === String(right);
 }
 
 function collectUsedTargetColumns_(
@@ -208,7 +237,8 @@ function collectUsedTargetColumns_(
     );
 
     if (column) {
-      columns[column] = true;
+      const safeColumn = assertSafeInventoryTargetColumn_(product, column);
+      columns[safeColumn] = true;
     }
   });
 
@@ -229,18 +259,6 @@ function loadColumnBuffers_(
   });
 
   return buffers;
-}
-
-function writeColumnBuffers_(
-  sheet,
-  buffers,
-  lastRow
-) {
-  Object.keys(buffers).forEach(column => {
-    sheet
-      .getRange(column + '1:' + column + lastRow)
-      .setValues(buffers[column]);
-  });
 }
 
 function prepareSingleImportWrite_(
@@ -329,10 +347,13 @@ function prepareSingleImportWrite_(
     value,
     item.location
   );
+  const safeTargetColumn = targetColumn
+    ? assertSafeInventoryTargetColumn_(product, targetColumn)
+    : '';
 
   if (
-    !targetColumn ||
-    !columnBuffers[targetColumn]
+    !safeTargetColumn ||
+    !columnBuffers[safeTargetColumn]
   ) {
     return createWriteResult_(
       originalInput,
@@ -343,17 +364,17 @@ function prepareSingleImportWrite_(
 
   const bufferIndex = product.inventoryRow - 1;
   const previousRaw =
-    columnBuffers[targetColumn][bufferIndex][0];
+    columnBuffers[safeTargetColumn][bufferIndex][0];
 
-  const previousValue =
+  const previousNumericValue =
     typeof previousRaw === 'number' &&
     Number.isFinite(previousRaw)
       ? previousRaw
       : 0;
 
-  const newValue = previousValue + value;
+  const newValue = previousNumericValue + value;
 
-  columnBuffers[targetColumn][bufferIndex][0] =
+  columnBuffers[safeTargetColumn][bufferIndex][0] =
     newValue;
 
   return {
@@ -361,8 +382,11 @@ function prepareSingleImportWrite_(
     product: product.name,
     saved: true,
     row: product.inventoryRow,
-    column: targetColumn,
-    previousValue: previousValue,
+    column: safeTargetColumn,
+    productType: String(product.type || '').toUpperCase(),
+    // Zachowujemy dokładny stan komórki. Pusta komórka musi po cofnięciu
+    // ponownie być pusta, a nie zawierać techniczne zero użyte do obliczeń.
+    previousValue: previousRaw === null || previousRaw === undefined ? '' : previousRaw,
     addedValue: value,
     newValue: newValue,
     qualityWarning: quality.warning,
@@ -374,52 +398,32 @@ function prepareSingleImportWrite_(
     duplicateWarning: false,
     message:
       'Zapisano do ' +
-      targetColumn +
+      safeTargetColumn +
       product.inventoryRow +
       (quality.warning ? ' | ' + quality.message : '')
   };
 }
 
-function resolveTargetColumn_(
-  product,
-  value,
-  location
-) {
-  const type = String(
-    product.type || ''
-  ).toUpperCase();
-
+function resolveTargetColumn_(product, value, location) {
+  const directFinal = getDirectFinalInventoryColumn_(product);
+  if (directFinal) return directFinal;
+  const type = String(product.type || '').toUpperCase();
   const isWholeNumber = Number.isInteger(value);
 
   if (type === CONFIG.PRODUCT_TYPES.LOCATION) {
-    const normalizedLocation = normalizeText(location);
-
-    const locationColumns = {
-      magazyn: product.columns.warehouse,
-      warehouse: product.columns.warehouse,
-      darkroom: product.columns.darkroom,
-      'dark room': product.columns.darkroom,
-      lodowki: product.columns.fridges,
-      lodowka: product.columns.fridges,
-      fridge: product.columns.fridges,
-      fridges: product.columns.fridges
-    };
-
-    return String(
-      locationColumns[normalizedLocation] || ''
-    ).toUpperCase();
+    const area = resolveLocationArea_(location);
+    if (!area || !area.columnKey) return '';
+    return String((product.columns || {})[area.columnKey] || '').toUpperCase();
   }
 
-  const quantityColumn = String(product.columns.quantity || '').toUpperCase();
-  const weightColumn = String(product.columns.weight || '').toUpperCase();
+  const quantityColumn = String((product.columns || {}).quantity || '').toUpperCase();
+  const weightColumn = String((product.columns || {}).weight || '').toUpperCase();
   const category = normalizeText(product.category || '');
 
-  // Produkty z jedną dozwoloną kolumną zawsze trafiają właśnie do niej.
-  // KAWA jest liczona wagowo również wtedy, gdy wpis ma postać liczby całkowitej.
+  // KAWA jest liczona wagowo również przy liczbie całkowitej.
   if (category === 'kawa' && weightColumn) return weightColumn;
   if (weightColumn && !quantityColumn) return weightColumn;
   if (quantityColumn && !weightColumn) return quantityColumn;
-
   return isWholeNumber ? quantityColumn : weightColumn;
 }
 
@@ -431,6 +435,7 @@ function createWriteResult_(
   return {
     originalInput: originalInput,
     product: '',
+    productType: '',
     saved: saved,
     row: null,
     column: '',

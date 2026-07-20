@@ -18,9 +18,10 @@ function applyInventoryTheme() {
   const categorySet = new Set(getBusinessCategories().map(normalizeText));
 
   for (let r = 0; r < values.length; r++) {
-    const rowText = values[r].join(' ').trim();
-    const normalized = normalizeText(rowText);
-    const isCategory = categorySet.has(normalized) || getBusinessCategories().some(c => normalized === normalizeText(c));
+    const firstCell = String((values[r] || [])[0] || '').trim();
+    const normalized = normalizeText(firstCell);
+    const businessCategory = normalizeBusinessCategory_(firstCell);
+    const isCategory = Boolean(businessCategory) && categorySet.has(normalizeText(businessCategory)) && normalized === normalizeText(businessCategory);
     if (isCategory) {
       sheet.getRange(r + 1, 1, 1, lastCol)
         .setBackground('#FDE7C2')

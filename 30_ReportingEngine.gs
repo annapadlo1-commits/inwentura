@@ -40,7 +40,7 @@ function generateInventoryReport_(sourceSheetName) {
     }
 
     const type = String(product.type || '').trim().toUpperCase();
-    if (!INVENTORY_SUMMARY_COLUMNS_[type]) {
+    if (!getConfiguredInventoryLayout_(type)) {
       validationIssues.push(createReportIssue_('ERROR', product.name, 'Nieobsługiwany typ: ' + (type || 'BRAK') + '.'));
       return;
     }
@@ -95,9 +95,27 @@ function generateInventoryReport_(sourceSheetName) {
 
 function readInventorySummaryItemFromMatrix_(values, product, category) {
   const type = String(product.type || '').trim().toUpperCase();
-  const layout = getInventorySummaryLayout_(type);
   const row = Number(product.inventoryRow);
   const rowValues = values[row - 1] || [];
+  if (isDirectFinalInventoryProduct_(product)) {
+    const directValue = matrixValueOrBlank_(rowValues, 'B');
+    const directItem = {
+      key: product.normalizedName || normalizeText(product.name),
+      product: product.name,
+      category: category,
+      type: type,
+      inventoryRow: row,
+      unit: 'kg',
+      finalTotal: directValue,
+      total: directValue,
+      details: { directFinal: directValue },
+      cells: { finalTotal: 'B' + row, directFinal: 'B' + row }
+    };
+    directItem.values = { 'Stan końcowy': directValue };
+    directItem.hasValue = directValue !== '';
+    return directItem;
+  }
+  const layout = getInventorySummaryLayout_(type);
 
   const item = {
     key: product.normalizedName || normalizeText(product.name),
@@ -109,10 +127,20 @@ function readInventorySummaryItemFromMatrix_(values, product, category) {
     finalTotal: matrixValueOrBlank_(rowValues, layout.finalTotal),
     total: matrixValueOrBlank_(rowValues, layout.finalTotal),
     details: {},
-    cells: { finalTotal: layout.finalTotal + row }
+    cells: {}
   };
+  addSummaryCellAddress_(item.cells, 'finalTotal', layout.finalTotal, row);
 
-  if (type === CONFIG.PRODUCT_TYPES.NORMAL) {
+  if (type === CONFIG.PRODUCT_TYPES.LOCATION) {
+    item.details = {
+      warehouse: matrixValueOrBlank_(rowValues, layout.warehouse),
+      darkroom: matrixValueOrBlank_(rowValues, layout.darkroom),
+      fridges: matrixValueOrBlank_(rowValues, layout.fridges)
+    };
+    addSummaryCellAddress_(item.cells, 'warehouse', layout.warehouse, row);
+    addSummaryCellAddress_(item.cells, 'darkroom', layout.darkroom, row);
+    addSummaryCellAddress_(item.cells, 'fridges', layout.fridges, row);
+  } else {
     item.details = {
       grossWeight: matrixValueOrBlank_(rowValues, layout.grossWeight),
       emptyContainerWeight: matrixValueOrBlank_(rowValues, layout.emptyContainerWeight),
@@ -122,28 +150,8 @@ function readInventorySummaryItemFromMatrix_(values, product, category) {
       unitCapacity: matrixValueOrBlank_(rowValues, layout.unitCapacity),
       fullUnitsVolume: matrixValueOrBlank_(rowValues, layout.fullUnitsVolume)
     };
-    item.cells.grossWeight = layout.grossWeight + row;
-    item.cells.fullUnits = layout.fullUnits + row;
-  } else if (type === CONFIG.PRODUCT_TYPES.KEG) {
-    item.details = {
-      grossWeight: matrixValueOrBlank_(rowValues, layout.grossWeight),
-      emptyContainerWeight: matrixValueOrBlank_(rowValues, layout.emptyContainerWeight),
-      openNet: matrixValueOrBlank_(rowValues, layout.openNet),
-      fullUnits: matrixValueOrBlank_(rowValues, layout.fullUnits),
-      unitCapacity: matrixValueOrBlank_(rowValues, layout.unitCapacity),
-      fullUnitsVolume: matrixValueOrBlank_(rowValues, layout.fullUnitsVolume)
-    };
-    item.cells.grossWeight = layout.grossWeight + row;
-    item.cells.fullUnits = layout.fullUnits + row;
-  } else {
-    item.details = {
-      warehouse: matrixValueOrBlank_(rowValues, layout.warehouse),
-      darkroom: matrixValueOrBlank_(rowValues, layout.darkroom),
-      fridges: matrixValueOrBlank_(rowValues, layout.fridges)
-    };
-    item.cells.warehouse = layout.warehouse + row;
-    item.cells.darkroom = layout.darkroom + row;
-    item.cells.fridges = layout.fridges + row;
+    addSummaryCellAddress_(item.cells, 'grossWeight', layout.grossWeight, row);
+    addSummaryCellAddress_(item.cells, 'fullUnits', layout.fullUnits, row);
   }
 
   item.values = buildLegacyReviewValues_(item);
@@ -152,7 +160,9 @@ function readInventorySummaryItemFromMatrix_(values, product, category) {
 }
 
 function matrixValueOrBlank_(rowValues, columnLetter) {
-  const index = columnLetterToNumber290_(columnLetter) - 1;
+  const column = normalizeColumnLetter_(columnLetter);
+  if (!column) return '';
+  const index = columnLetterToNumber290_(column) - 1;
   const value = rowValues[index];
   if (value === '' || value === null || value === undefined) return '';
   const number = Number(value);
@@ -166,10 +176,7 @@ function columnLetterToNumber290_(letters) {
 function isReportingItemCompleted_(item) {
   const details = item.details || {};
   if (item.type === CONFIG.PRODUCT_TYPES.LOCATION) {
-    return ['warehouse', 'darkroom', 'fridges'].some(key => details[key] !== '');
-  }
-  if (item.type === CONFIG.PRODUCT_TYPES.KEG) {
-    return details.grossWeight !== '' || details.fullUnits !== '';
+    return getLocationAreaDefinitions_().some(area => details[area.columnKey] !== '');
   }
   return details.grossWeight !== '' || details.fullUnits !== '';
 }

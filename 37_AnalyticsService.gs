@@ -8,7 +8,7 @@ function showInventoryAnalytics() {
   const html = renderInventoryTemplate_('UI_Analytics')
     .setWidth(1240)
     .setHeight(860);
-  SpreadsheetApp.getUi().showModalDialog(html, '🍕 Inventory PRO — Analytics 4.0');
+  SpreadsheetApp.getUi().showModalDialog(html, '🍕 Inventory PRO — Porównanie inwentaryzacji');
 }
 
 function getInventoryAnalyticsSources() {

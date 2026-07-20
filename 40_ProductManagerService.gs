@@ -55,6 +55,8 @@ function getProductManagerData() {
           aliases: products.reduce((sum, item) => sum + item.aliases.length, 0)
         },
         productTypes: Object.keys(CONFIG.PRODUCT_TYPES).map(key => CONFIG.PRODUCT_TYPES[key]),
+        locationAreas: getLocationUiOptions_(),
+        columnLabels: Object.assign({ quantity: 'Sztuki', weight: 'Waga' }, getLocationColumnLabelMap_()),
         performance: {
           loadMs: Date.now() - startedAt,
           source: 'BATCHED'
@@ -218,12 +220,13 @@ function validateProductManagerPayload_(payload) {
   const originalName = String(data.originalName || '').trim();
   const name = String(data.name || '').trim();
   const type = String(data.type || '').trim().toUpperCase();
-  const category = String(data.category || '').trim();
+  const category = normalizeBusinessCategory_(data.category);
   const validTypes = Object.keys(CONFIG.PRODUCT_TYPES).map(key => CONFIG.PRODUCT_TYPES[key]);
 
   if (!originalName) throw new Error('Brak oryginalnej nazwy produktu.');
   validateNewProductName_(name);
-  if (!validTypes.includes(type)) throw new Error('Nieprawidlowy typ produktu: ' + type);
+  if (!validTypes.includes(type)) throw new Error('Nieprawidłowy typ produktu: ' + type);
+  if (!category) throw new Error('Wybierz prawidłową kategorię biznesową.');
 
   const sourceColumns = data.columns || {};
   const columns = {
@@ -233,16 +236,9 @@ function validateProductManagerPayload_(payload) {
     darkroom: normalizeColumnLetter_(sourceColumns.darkroom),
     fridges: normalizeColumnLetter_(sourceColumns.fridges)
   };
-
-  if (type === CONFIG.PRODUCT_TYPES.NORMAL && !columns.quantity && !columns.weight) {
-    throw new Error('Produkt NORMAL musi miec kolumne sztuk lub wagi.');
-  }
-  if (type === CONFIG.PRODUCT_TYPES.KEG && !columns.quantity && !columns.weight) {
-    throw new Error('Produkt KEG musi miec kolumne pelnych kegow lub wagi.');
-  }
-  if (type === CONFIG.PRODUCT_TYPES.LOCATION &&
-      !columns.warehouse && !columns.darkroom && !columns.fridges) {
-    throw new Error('Produkt LOCATION musi miec co najmniej jedna kolumne lokalizacji.');
+  const mapping = validateProductColumnMapping_(type, columns, { name: name, type: type });
+  if (!mapping.valid) {
+    throw new Error('Nieprawidłowe mapowanie kolumn: ' + mapping.errors.join(' '));
   }
 
   return {
@@ -250,7 +246,7 @@ function validateProductManagerPayload_(payload) {
     name: name,
     type: type,
     category: category,
-    columns: columns,
+    columns: mapping.columns,
     active: Boolean(data.active)
   };
 }

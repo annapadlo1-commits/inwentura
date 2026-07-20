@@ -13,8 +13,44 @@ function getDictionarySheet_() {
   return sheet;
 }
 
+function detectDictionaryCodeContamination_(sheet) {
+  const target = sheet || getDictionarySheet_();
+  const lastRow = target.getLastRow();
+  if (lastRow < 2) return [];
+  const values = target.getRange(2, 2, lastRow - 1, 1).getDisplayValues();
+  const signatures = [
+    /^\s*\/\*\*?/, /^\s*\*\/?\s*$/, /^\s*function\s+[A-Za-z_$]/,
+    /^\s*(const|let|var)\s+[A-Za-z_$]/, /SpreadsheetApp\./,
+    /getRange\s*\(/, /setValues?\s*\(/, /setFormula/,
+    /=>/, /throw\s+new\s+Error/, /return\s+[A-Za-z_$].*\(/,
+    /^\s*[{}][;,]?\s*$/
+  ];
+  const issues = [];
+  values.forEach((row, index) => {
+    const value = String(row[0] || '').trim();
+    if (!value) return;
+    if (signatures.some(pattern => pattern.test(value))) {
+      issues.push({ row: index + 2, value: value });
+    }
+  });
+  return issues;
+}
+
+function assertDictionaryIsSafe_() {
+  const sheet = getDictionarySheet_();
+  const issues = detectDictionaryCodeContamination_(sheet);
+  if (!issues.length) return true;
+  const examples = issues.slice(0, 5).map(item => 'B' + item.row).join(', ');
+  throw new Error(
+    'SLOWNIK jest uszkodzony: wykryto fragmenty kodu w kolumnie B (' +
+    issues.length + ' komórek; przykłady: ' + examples + '). ' +
+    'Import został zatrzymany, aby nie zapisywać błędnych danych.'
+  );
+}
+
 function loadAliases() {
   const sheet = getDictionarySheet_();
+  assertDictionaryIsSafe_();
   const lastRow = sheet.getLastRow();
 
   if (lastRow < 2) {
@@ -128,79 +164,156 @@ function ensureNewProductInDictionary_(productData) {
 
   const sheet = getDictionarySheet_();
   const normalizedName = normalizeText(name);
-  const configurations = loadProductConfigurations();
-  let configuration = configurations.find(item => item.normalizedName === normalizedName);
+  const mutation = {
+    configurationRow: null,
+    configurationCreated: false,
+    addedAliases: [],
+    addedAliasRows: []
+  };
 
-  if (!configuration) {
-    const configRow = findFirstEmptyDictionaryRow_(
-      sheet,
-      CONFIG.DICTIONARY.CONFIG_START_COLUMN,
-      CONFIG.DICTIONARY.FIRST_DATA_ROW
-    );
+  try {
+    const configurations = loadProductConfigurations();
+    let configuration = configurations.find(item => item.normalizedName === normalizedName);
 
-    const row = [
-      name,
-      productType,
-      category,
-      columns.quantity || '',
-      columns.weight || '',
-      columns.warehouse || '',
-      columns.darkroom || '',
-      columns.fridges || '',
-      'TAK'
-    ];
+    if (!configuration) {
+      const configRow = findFirstEmptyDictionaryRow_(
+        sheet,
+        CONFIG.DICTIONARY.CONFIG_START_COLUMN,
+        CONFIG.DICTIONARY.FIRST_DATA_ROW
+      );
 
-    sheet.getRange(
-      configRow,
+      const row = [
+        name,
+        productType,
+        category,
+        columns.quantity || '',
+        columns.weight || '',
+        columns.warehouse || '',
+        columns.darkroom || '',
+        columns.fridges || '',
+        'TAK'
+      ];
+
+      sheet.getRange(
+        configRow,
+        CONFIG.DICTIONARY.CONFIG_START_COLUMN,
+        1,
+        CONFIG.DICTIONARY.CONFIG_COLUMN_COUNT
+      ).setValues([row]);
+
+      configuration = { dictionaryRow: configRow, name: name };
+      mutation.configurationCreated = true;
+    }
+    mutation.configurationRow = configuration.dictionaryRow || null;
+
+    const aliasesToEnsure = [name, sourceAlias]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+
+    const existingAliases = loadAliases();
+    aliasesToEnsure.forEach(alias => {
+      const normalizedAlias = normalizeText(alias);
+      if (!normalizedAlias) return;
+
+      const existingTarget = existingAliases[normalizedAlias];
+      if (existingTarget) {
+        if (normalizeText(existingTarget) !== normalizedName) {
+          logWarning(
+            'Dictionary',
+            'ensureNewProductInDictionary_',
+            'Nie nadpisano konfliktowego aliasu nowego produktu.',
+            { alias: alias, existingProduct: existingTarget, newProduct: name }
+          );
+        }
+        return;
+      }
+
+      const aliasRow = findFirstEmptyDictionaryRow_(
+        sheet,
+        CONFIG.DICTIONARY.ALIAS_COLUMN,
+        CONFIG.DICTIONARY.FIRST_DATA_ROW
+      );
+      sheet.getRange(aliasRow, CONFIG.DICTIONARY.ALIAS_COLUMN, 1, 2)
+        .setValues([[alias, name]]);
+      existingAliases[normalizedAlias] = name;
+      mutation.addedAliases.push(alias);
+      mutation.addedAliasRows.push({ row: aliasRow, alias: alias, product: name });
+    });
+
+    SpreadsheetApp.flush();
+    invalidateProductCatalogCache_();
+    return mutation;
+  } catch (error) {
+    try {
+      rollbackNewProductDictionaryEntry_(name, mutation);
+    } catch (rollbackError) {
+      logError(
+        'Dictionary',
+        'ensureNewProductInDictionary_.rollback',
+        rollbackError,
+        { product: name, mutation: mutation },
+        0
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Cofnięcie dotyczy wyłącznie rekordów utworzonych przez bieżącą operację.
+ * Przed wyczyszczeniem każda komórka jest ponownie porównywana, dzięki czemu
+ * ręczna zmiana wykonana równolegle nie zostanie nadpisana.
+ */
+function rollbackNewProductDictionaryEntry_(productName, dictionaryResult) {
+  const result = dictionaryResult || {};
+  if (!result.configurationCreated && !(result.addedAliasRows || []).length) {
+    return { configurationRemoved: false, aliasesRemoved: 0, conflicts: [] };
+  }
+
+  const sheet = getDictionarySheet_();
+  const targetKey = normalizeText(productName);
+  const conflicts = [];
+  let aliasesRemoved = 0;
+
+  (result.addedAliasRows || []).slice().reverse().forEach(item => {
+    const range = sheet.getRange(Number(item.row), CONFIG.DICTIONARY.ALIAS_COLUMN, 1, 2);
+    const values = range.getDisplayValues()[0];
+    if (
+      normalizeText(values[0]) === normalizeText(item.alias) &&
+      normalizeText(values[1]) === targetKey
+    ) {
+      range.clearContent();
+      aliasesRemoved++;
+    } else {
+      conflicts.push('Alias w wierszu ' + item.row + ' został zmieniony po utworzeniu.');
+    }
+  });
+
+  let configurationRemoved = false;
+  if (result.configurationCreated && result.configurationRow) {
+    const range = sheet.getRange(
+      Number(result.configurationRow),
       CONFIG.DICTIONARY.CONFIG_START_COLUMN,
       1,
       CONFIG.DICTIONARY.CONFIG_COLUMN_COUNT
-    ).setValues([row]);
-
-    configuration = { dictionaryRow: configRow, name: name };
-  }
-
-  const aliasesToEnsure = [name, sourceAlias]
-    .map(value => String(value || '').trim())
-    .filter(Boolean);
-
-  const existingAliases = loadAliases();
-  const addedAliases = [];
-
-  aliasesToEnsure.forEach(alias => {
-    const normalizedAlias = normalizeText(alias);
-    if (!normalizedAlias) return;
-
-    const existingTarget = existingAliases[normalizedAlias];
-    if (existingTarget) {
-      if (normalizeText(existingTarget) !== normalizedName) {
-        logWarning(
-          'Dictionary',
-          'ensureNewProductInDictionary_',
-          'Nie nadpisano konfliktowego aliasu nowego produktu.',
-          { alias: alias, existingProduct: existingTarget, newProduct: name }
-        );
-      }
-      return;
-    }
-
-    const aliasRow = findFirstEmptyDictionaryRow_(
-      sheet,
-      CONFIG.DICTIONARY.ALIAS_COLUMN,
-      CONFIG.DICTIONARY.FIRST_DATA_ROW
     );
-    sheet.getRange(aliasRow, CONFIG.DICTIONARY.ALIAS_COLUMN, 1, 2)
-      .setValues([[alias, name]]);
-    existingAliases[normalizedAlias] = name;
-    addedAliases.push(alias);
-  });
+    const values = range.getDisplayValues()[0];
+    if (normalizeText(values[0]) === targetKey) {
+      range.clearContent();
+      configurationRemoved = true;
+    } else {
+      conflicts.push(
+        'Konfiguracja w wierszu ' + result.configurationRow + ' została zmieniona po utworzeniu.'
+      );
+    }
+  }
 
   SpreadsheetApp.flush();
   invalidateProductCatalogCache_();
-
   return {
-    configurationRow: configuration.dictionaryRow || null,
-    addedAliases: addedAliases
+    configurationRemoved: configurationRemoved,
+    aliasesRemoved: aliasesRemoved,
+    conflicts: conflicts
   };
 }
 

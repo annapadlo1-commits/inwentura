@@ -7,7 +7,7 @@ function showUserWorkspace() {
   setWorkspaceMode_('USER');
   applyWorkspaceVisibility_('USER');
   activateSheetByName_(CONFIG.SHEETS.INVENTORY);
-  SpreadsheetApp.getActive().toast('Widok użytkownika: INWENTURA i RAPORT.', 'Inventory PRO', 5);
+  SpreadsheetApp.getActive().toast('Widok użytkownika: INWENTURA. Raporty znajdziesz w menu INVENTORY PRO.', 'Inventory PRO', 5);
 }
 
 function showManagerWorkspace() {
@@ -34,12 +34,14 @@ function applyWorkspaceVisibility_(mode) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const technical = [
     CONFIG.SHEETS.DICTIONARY,
+    CONFIG.SHEETS.REPORT,
     CONFIG.SHEETS.SETTINGS,
     CONFIG.SHEETS.HISTORY,
     CONFIG.SHEETS.TECH_LOG,
     CONFIG.SHEETS.IMPORT_AUDIT,
     CONFIG.SHEETS.NEW_PRODUCTS,
     CONFIG.SHEETS.DATA_AUDIT,
+    CONFIG.SHEETS.EXPORT_HISTORY,
     CONFIG.SHEETS.HISTORY_LEGACY
   ];
 
@@ -54,8 +56,6 @@ function applyWorkspaceVisibility_(mode) {
     }
   });
 
-  [CONFIG.SHEETS.INVENTORY, CONFIG.SHEETS.REPORT].forEach(name => {
-    const sheet = ss.getSheetByName(name);
-    if (sheet && sheet.isSheetHidden()) sheet.showSheet();
-  });
+  const inventory = getSheetByConfiguredName_(CONFIG.SHEETS.INVENTORY);
+  if (inventory && inventory.isSheetHidden()) inventory.showSheet();
 }

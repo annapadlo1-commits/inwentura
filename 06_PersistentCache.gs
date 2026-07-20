@@ -66,6 +66,9 @@ function invalidateProductCatalogCache_() {
   CacheService.getDocumentCache().remove(
     CONFIG.CACHE.CATALOG_KEY
   );
+  if (typeof invalidateRuntimeSnapshot_ === 'function') {
+    invalidateRuntimeSnapshot_();
+  }
 }
 
 function clearProductCatalogCache() {

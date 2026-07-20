@@ -26,7 +26,7 @@ function runAllEnterpriseTests() {
     testProductCatalog_,
     testExactMatcher_,
     testBusinessHistorySheet_,
-    testReportSheet_,
+    testImportAuditSheet_,
     testValidationReport_,
     testQualityWarning_,
     testQualityZeroWarning_,
@@ -42,7 +42,27 @@ function runAllEnterpriseTests() {
     testNewProductAuditKey_,
     testSummaryColumnMapping284_,
     testSummaryInputColumns284_,
-    testClosedBusinessCategories284_
+    testClosedBusinessCategories284_,
+    testPawilonyLayoutContract432_,
+    testPawilonyLocationMapping432_,
+    testGenericBeerClassification432_,
+    testPawilonyHeaderDetection432_,
+    testPawilonyMappingGuard432_,
+    testPawilonyTargetColumnRouting432_,
+    testNewProductRowRollback432_,
+    testSparseWritePlan432_,
+    testSparseRollback432_,
+    testFormulaWriteGuard432_,
+    testCanonicalInventoryFormulas434_,
+    testDirectFinalCoffeeException434_,
+    testDirectFinalProductManagerMapping4313_,
+    testXlsxExportWithoutDriveApi4313_,
+    testRecoveryDictionaryContaminationGuard_,
+    testFormulaRepairHardDisabled436_,
+    testFormulaRepairSegments432_,
+    testFormulaRepairConcurrency432_,
+    testFormulaConflictClassification432_,
+    testUndoConflictEvaluation432_
   ];
 
   const results = tests.map(runSingleTest_);
@@ -233,6 +253,28 @@ function testParserLocations_() {
   );
 }
 
+function testLocationPrefixProductNameIntegrity_() {
+  const context = createParserTestContext_(['Inne Beczki', 'Cieszyn Pilsner']);
+  const parsed = parseInventoryText('magazyn Inne beczki Pilsner 2', context);
+  assertCondition_(parsed.length === 1,
+    'Nazwa po lokalizacji nie może zostać rozbita na dwa wpisy: ' + JSON.stringify(parsed));
+  assertCondition_(normalizeText(parsed[0].product) === 'inne beczki pilsner',
+    'Parser zgubił początek nazwy produktu: ' + parsed[0].product);
+  assertCondition_(parsed[0].value === 2 && parsed[0].location === 'magazyn',
+    'Parser zgubił wartość lub lokalizację.');
+  const recognition = matchProductForParser_(parsed[0].product, context);
+  assertCondition_(!recognition.match.matched,
+    'Nie wolno automatycznie przypisać skróconej nazwy do Cieszyn Pilsner.');
+
+  const exactContext = createParserTestContext_([
+    'Inne Beczki', 'Inne Beczki Pilsner 0,5L', 'Cieszyn Pilsner'
+  ]);
+  const exact = parseInventoryText('magazyn Inne beczki Pilsner 2', exactContext);
+  assertCondition_(exact.length === 1 &&
+      normalizeText(exact[0].product) === normalizeText('Inne Beczki Pilsner 0,5L'),
+    'Pełna pozycja Inne Beczki Pilsner nie została wybrana z katalogu.');
+}
+
 function testParserLucanoZero_() {
   const context = createParserTestContext_([
     'Amaro Lucano 1L',
@@ -334,18 +376,18 @@ function testBusinessHistorySheet_() {
   );
 }
 
-function testReportSheet_() {
-  const sheet = getOrCreateConfiguredSheet_(
-    CONFIG.SHEETS.REPORT
-  );
-
-  ensureReportHeaders_(sheet);
+function testImportAuditSheet_() {
+  const sheet = getOrCreateTechnicalHistorySheet_();
 
   assertCondition_(
     normalizeText(
       sheet.getRange(1, 1).getDisplayValue()
     ) === 'import id',
-    'Raport nie ma poprawnych naglowkow.'
+    'Audyt importow nie ma poprawnych naglowkow.'
+  );
+  assertCondition_(
+    normalizeText(sheet.getRange(1, 17).getDisplayValue()) === 'duplicate count',
+    'Audyt importow nie zawiera danych o duplikatach.'
   );
 }
 
@@ -971,4 +1013,455 @@ function testLongestMatchZeroRC34_() {
 
 function ip34Assert_(condition, message) {
   if (!condition) throw new Error(message || 'Assertion failed');
+}
+/** Inventory PRO 4.3.4 — kontrakt układu i bezpieczeństwa PAWILONÓW. */
+function testPawilonyLayoutContract432_() {
+  const normal = getInventorySummaryLayout_(CONFIG.PRODUCT_TYPES.NORMAL);
+  const keg = getInventorySummaryLayout_(CONFIG.PRODUCT_TYPES.KEG);
+  const location = getInventorySummaryLayout_(CONFIG.PRODUCT_TYPES.LOCATION);
+
+  assertCondition_(normal.grossWeight === 'C' && normal.fullUnits === 'H' && normal.finalTotal === 'K',
+    'NORMAL musi korzystać z wejść C/H oraz stanu końcowego K.');
+  assertCondition_(keg.grossWeight === 'C' && keg.fullUnits === 'G' && keg.finalTotal === 'J',
+    'KEG musi korzystać z wejść C/G oraz stanu końcowego J.');
+  assertCondition_(location.warehouse === 'B' && location.darkroom === 'C' &&
+      location.fridges === 'D' && location.finalTotal === 'E',
+    'LOCATION musi korzystać z B/C/D oraz sumy E.');
+  assertCondition_(getFormulaColumnsForProductType_('NORMAL').join('|') === 'E|J|K',
+    'Nieprawidłowa lista chronionych formuł NORMAL.');
+  assertCondition_(getFormulaColumnsForProductType_('KEG').join('|') === 'E|I|J',
+    'Nieprawidłowa lista chronionych formuł KEG.');
+  assertCondition_(getFormulaColumnsForProductType_('LOCATION').join('|') === 'E',
+    'Nieprawidłowa lista chronionych formuł LOCATION.');
+}
+
+function testPawilonyLocationMapping432_() {
+  const product = {
+    type: CONFIG.PRODUCT_TYPES.LOCATION,
+    category: 'SOFTY',
+    columns: getInputColumnsForProductType_(CONFIG.PRODUCT_TYPES.LOCATION)
+  };
+  assertCondition_(resolveTargetColumn_(product, 12, 'magazyn') === 'B', 'Magazyn musi zapisywać się do B.');
+  assertCondition_(resolveTargetColumn_(product, 12, 'darkroom') === 'C', 'Darkroom musi zapisywać się do C.');
+  assertCondition_(resolveTargetColumn_(product, 12, 'lodówki') === 'D', 'Lodówki muszą zapisywać się do D.');
+  assertCondition_(resolveTargetColumn_(product, 12, 'zaplecze') === '',
+    'Nieznana lokalizacja nie może trafić do przypadkowej kolumny.');
+}
+
+function testGenericBeerClassification432_() {
+  const bottleRow = ['', '', '', '', '', '', '', '', '0,5', '', ''];
+  const kegRow = ['', '', '', '', '', '', '', '30', '', '', ''];
+  assertCondition_(inferInventoryProductType_('NORMAL', 'PIWO BUTELKI', 'Birra 0,5', bottleRow) === 'LOCATION',
+    'Sekcja PIWO BUTELKI musi być liczona lokalizacyjnie.');
+  assertCondition_(inferInventoryProductType_('KEG', 'PIWO KEG', 'Wawerskie Jasne', kegRow) === 'KEG',
+    'Sekcja PIWO KEG musi zachować typ KEG.');
+  assertCondition_(inferInventoryProductType_('NORMAL', 'WINO', 'IL RACOLTO KEG 18L', bottleRow) === 'NORMAL',
+    'Słowo KEG w nazwie produktu spoza sekcji PIWO nie może zmienić układu na KEG.');
+}
+
+function testPawilonyHeaderDetection432_() {
+  const normalHeader = [
+    ' ', '', 'WAGA/SZT W BUTELCE / KEGU', 'WAGA BUTELKI / KEGA',
+    'WAGA BEZ BTLK', '', 'WAGA PREP netto', 'PEŁNE BTLK szt',
+    'POJEMNOŚĆ', 'PEŁNE BTLK L', 'CAŁOŚĆ W L'
+  ];
+  const normal = detectInventoryInputColumnsFromHeaderRow_(
+    normalHeader, CONFIG.PRODUCT_TYPES.NORMAL,
+    getInputColumnsForProductType_(CONFIG.PRODUCT_TYPES.NORMAL)
+  );
+  const keg = detectInventoryInputColumnsFromHeaderRow_(
+    ['PIWO KEG', '', 'WAGA W KEGU', 'WAGA PUSTY KEG', 'WAGA BEZ KEGA', '', 'PEŁNE KEGI'],
+    CONFIG.PRODUCT_TYPES.KEG,
+    getInputColumnsForProductType_(CONFIG.PRODUCT_TYPES.KEG)
+  );
+  const locationFirst = detectInventoryInputColumnsFromHeaderRow_(
+    ['PIWO BUTELKI', '', 'DARKROOM SZT', 'LODÓWKI SZT', 'RAZEM'],
+    CONFIG.PRODUCT_TYPES.LOCATION,
+    getInputColumnsForProductType_(CONFIG.PRODUCT_TYPES.LOCATION)
+  );
+  const continuation = ['', 'MAGAZYN SZT'];
+  const location = mergeDetectedProductColumns_(
+    locationFirst,
+    detectInventoryInputColumnsFromHeaderRow_(
+      continuation, CONFIG.PRODUCT_TYPES.LOCATION, locationFirst
+    )
+  );
+
+  assertCondition_(normal.weight === 'C' && normal.quantity === 'H',
+    'Nagłówek główny powinien wykryć C/H.');
+  assertCondition_(keg.weight === 'C' && keg.quantity === 'G',
+    'Nagłówek PIWO KEG powinien wykryć C/G.');
+  assertCondition_(isInventoryHeaderContinuationRow_(continuation, CONFIG.PRODUCT_TYPES.LOCATION),
+    'Wiersz MAGAZYN SZT powinien być kontynuacją nagłówka, nie produktem.');
+  assertCondition_(location.warehouse === 'B' && location.darkroom === 'C' && location.fridges === 'D',
+    'Dwuwierszowy nagłówek PIWO BUTELKI powinien wykryć B/C/D.');
+  assertCondition_(isExactInventoryHeaderText_('GIN') && !isExactInventoryHeaderText_('Gin Mare 0,7L'),
+    'Walidator nie może mylić produktu zawierającego kategorię z nagłówkiem.');
+}
+
+function testPawilonyMappingGuard432_() {
+  assertCondition_(validateProductColumnMapping_('NORMAL', { weight:'C', quantity:'H' }).valid,
+    'Poprawne mapowanie NORMAL zostało odrzucone.');
+  assertCondition_(validateProductColumnMapping_('KEG', { weight:'C', quantity:'G' }).valid,
+    'Poprawne mapowanie KEG zostało odrzucone.');
+  assertCondition_(validateProductColumnMapping_('LOCATION', {
+    warehouse:'B', darkroom:'C', fridges:'D'
+  }).valid, 'Poprawne mapowanie LOCATION zostało odrzucone.');
+
+  assertCondition_(!validateProductColumnMapping_('NORMAL', { weight:'E', quantity:'H' }).valid,
+    'Kolumna formuły E nie może być wejściem NORMAL.');
+  assertCondition_(!validateProductColumnMapping_('KEG', { weight:'C', quantity:'I' }).valid,
+    'Kolumna formuły I nie może być wejściem KEG.');
+  assertCondition_(!validateProductColumnMapping_('LOCATION', {
+    warehouse:'E', darkroom:'C', fridges:'D'
+  }).valid, 'Kolumna sumy E nie może być wejściem LOCATION.');
+  assertCondition_(!validateProductColumnMapping_('LOCATION', {
+    warehouse:'B', darkroom:'B', fridges:'D'
+  }).valid, 'Jedna kolumna nie może reprezentować dwóch lokalizacji.');
+}
+
+function testPawilonyTargetColumnRouting432_() {
+  const normal = {
+    type:'NORMAL', category:'BITTER', columns:{ weight:'C', quantity:'H' }
+  };
+  const keg = {
+    type:'KEG', category:'PIWO KEG', columns:{ weight:'C', quantity:'G' }
+  };
+  const location = {
+    type:'LOCATION', category:'SOFTY',
+    columns:{ warehouse:'B', darkroom:'C', fridges:'D' }
+  };
+  const coffee = {
+    type:'NORMAL', category:'KAWA', columns:{ weight:'C', quantity:'H' }
+  };
+  const wineNamedKeg = {
+    type:'NORMAL', category:'WINO', name:'IL RACOLTO KEG 18L',
+    columns:{ weight:'C', quantity:'H' }
+  };
+
+  assertCondition_(resolveTargetColumn_(normal, 1.25, '') === 'C',
+    'Wartość dziesiętna NORMAL musi trafić do C.');
+  assertCondition_(resolveTargetColumn_(normal, 3, '') === 'H',
+    'Liczba całkowita NORMAL musi trafić do H.');
+  assertCondition_(resolveTargetColumn_(keg, 22.4, '') === 'C',
+    'Waga otwartego KEG musi trafić do C.');
+  assertCondition_(resolveTargetColumn_(keg, 2, '') === 'G',
+    'Liczba pełnych KEG musi trafić do G.');
+  assertCondition_(resolveTargetColumn_(location, 4, 'magazyn') === 'B',
+    'Magazyn LOCATION musi trafić do B.');
+  assertCondition_(resolveTargetColumn_(location, 4, 'darkroom') === 'C',
+    'Darkroom LOCATION musi trafić do C.');
+  assertCondition_(resolveTargetColumn_(location, 4, 'lodówki') === 'D',
+    'Lodówki LOCATION muszą trafić do D.');
+  assertCondition_(resolveTargetColumn_(coffee, 2, '') === 'C',
+    'KAWA pozostaje wagowa również dla liczby całkowitej.');
+  assertCondition_(resolveTargetColumn_(wineNamedKeg, 1, '') === 'H',
+    'Słowo KEG w nazwie wina nie może zmieniać typu NORMAL ani kolumny docelowej.');
+}
+
+function testNewProductRowRollback432_() {
+  const state = { name:'Nowy produkt', deleted:[] };
+  const sheet = {
+    getRange: function(row, column) {
+      return {
+        getDisplayValue: function() { return column === 1 ? state.name : ''; }
+      };
+    },
+    deleteRow: function(row) { state.deleted.push(row); }
+  };
+
+  const removed = rollbackInsertedInventoryProductRow_(sheet, 20, 'Nowy produkt');
+  assertCondition_(removed.removed && state.deleted.length === 1 && state.deleted[0] === 20,
+    'Rollback powinien usunąć wyłącznie własny, niezmieniony wiersz produktu.');
+
+  state.name = 'Ręcznie zmieniony produkt';
+  const conflict = rollbackInsertedInventoryProductRow_(sheet, 21, 'Nowy produkt');
+  assertCondition_(!conflict.removed && state.deleted.length === 1,
+    'Rollback nie może usunąć wiersza zmienionego ręcznie.');
+}
+
+function testSparseWritePlan432_() {
+  const plan = buildSparseWritePlan_([
+    { saved:true, row:10, column:'C', previousValue:'', newValue:2, product:'A', productType:'NORMAL' },
+    { saved:true, row:10, column:'C', previousValue:2, newValue:5, product:'A', productType:'NORMAL' },
+    { saved:true, row:11, column:'H', previousValue:1, newValue:4, product:'B', productType:'NORMAL' },
+    { saved:false, row:null, column:'', previousValue:'', newValue:'' }
+  ]);
+  assertCondition_(plan.length === 2, 'Plan powinien zawierać dwie zmienione komórki.');
+  const c10 = plan.filter(item => item.a1 === 'C10')[0];
+  assertCondition_(c10 && c10.previousValue === '' && c10.newValue === 5 && c10.productType === 'NORMAL',
+    'Duplikaty C10 muszą zachować pierwszy stan, ostatnią sumę i typ produktu.');
+}
+
+function testSparseRollback432_() {
+  const values = { C10:5, H10:2, G10:'' };
+  const sheet = {
+    getRange: function(a1) {
+      return {
+        getValue: function() { return values[a1]; },
+        setValue: function(value) { values[a1] = value; },
+        clearContent: function() { values[a1] = ''; }
+      };
+    }
+  };
+  rollbackSparseWritePlan_(sheet, [
+    { a1:'C10', previousValue:1, newValue:5 },
+    { a1:'H10', previousValue:2, newValue:6 },
+    { a1:'G10', previousValue:'', newValue:3 }
+  ]);
+  assertCondition_(values.C10 === 1, 'Zapisana komórka C10 musi zostać cofnięta.');
+  assertCondition_(values.H10 === 2, 'Komórka jeszcze niezapisana nie może zostać zmieniona przez rollback.');
+  assertCondition_(values.G10 === '', 'Pusta komórka jeszcze niezapisana musi pozostać pusta.');
+}
+
+function testFormulaWriteGuard432_() {
+  const values = { C10:0, E10:0 };
+  const formulas = { C10:'=A1', E10:'' };
+  const sheet = {
+    getRange: function(a1) {
+      return {
+        getFormula: function() { return formulas[a1] || ''; },
+        getValue: function() { return values[a1]; },
+        setValue: function(value) { values[a1] = value; }
+      };
+    }
+  };
+
+  let protectedColumnBlocked = false;
+  try {
+    writeSparseWritePlan_(sheet, [{
+      a1:'E10', row:10, column:'E', previousValue:0, newValue:1,
+      product:'A', productType:'NORMAL'
+    }]);
+  } catch (error) {
+    protectedColumnBlocked = String(error && error.message || error).indexOf('obliczeniowej') >= 0;
+  }
+  assertCondition_(protectedColumnBlocked,
+    'Zapis do kolumny obliczeniowej musi zostać zablokowany nawet po spłaszczeniu formuły.');
+
+  let liveFormulaBlocked = false;
+  try {
+    writeSparseWritePlan_(sheet, [{
+      a1:'C10', row:10, column:'C', previousValue:0, newValue:1,
+      product:'A', productType:'NORMAL'
+    }]);
+  } catch (error) {
+    liveFormulaBlocked = String(error && error.message || error).indexOf('formułą') >= 0;
+  }
+  assertCondition_(liveFormulaBlocked, 'Istniejąca formuła w dozwolonej kolumnie wejściowej musi blokować zapis.');
+}
+
+function testCanonicalInventoryFormulas434_() {
+  const normal = { inventoryRow:3, type:'NORMAL', category:'BITTER', name:'Amaro' };
+  const keg = { inventoryRow:85, type:'KEG', category:'PIWO KEG', name:'Wawerskie' };
+  const location = { inventoryRow:89, type:'LOCATION', category:'PIWO BUTELKI', name:'Butelka' };
+
+  assertCondition_(getCanonicalInventoryFormula_(normal, 'E') === '=C3-D3',
+    'Nieprawidłowa formuła E dla NORMAL.');
+  assertCondition_(getCanonicalInventoryFormula_(normal, 'J') === '=H3*I3',
+    'Nieprawidłowa formuła J dla NORMAL.');
+  assertCondition_(getCanonicalInventoryFormula_(normal, 'K') === '=SUM(E3:G3)+J3',
+    'Nieprawidłowa formuła K dla NORMAL.');
+  assertCondition_(getCanonicalInventoryFormula_(keg, 'E') === '=C85-D85',
+    'Nieprawidłowa formuła E dla KEG.');
+  assertCondition_(getCanonicalInventoryFormula_(keg, 'I') === '=G85*H85',
+    'Nieprawidłowa formuła I dla KEG.');
+  assertCondition_(getCanonicalInventoryFormula_(keg, 'J') === '=E85+I85',
+    'Nieprawidłowa formuła J dla KEG.');
+  assertCondition_(getCanonicalInventoryFormula_(location, 'E') === '=SUM(B89:D89)',
+    'Nieprawidłowa formuła E dla LOCATION.');
+}
+
+
+function testDirectFinalCoffeeException434_() {
+  const coffee = { inventoryRow:275, type:'NORMAL', category:'KAWA', name:'Czarna Fala Przelew 1 kg', columns:{weight:'C',quantity:'H'} };
+  assertCondition_(isDirectFinalInventoryProduct_(coffee), 'Nie rozpoznano wyjątku Czarna Fala Przelew 1 kg.');
+  assertCondition_(resolveTargetColumn_(coffee, 3, '') === 'B', 'Czarna Fala musi zapisywać wartość do B.');
+  assertCondition_(getInventoryFormulaContract_(coffee).length === 0, 'Czarna Fala nie może mieć formuł E/J/K.');
+  assertCondition_(assertSafeInventoryTargetColumn_(coffee, 'B') === 'B', 'Kolumna B musi być dozwolona dla Czarnej Fali.');
+  let blocked = false;
+  try { assertSafeInventoryTargetColumn_(coffee, 'K'); } catch (error) { blocked = true; }
+  assertCondition_(blocked, 'Zapis Czarnej Fali poza B musi być blokowany.');
+}
+
+function testDirectFinalProductManagerMapping4313_() {
+  const coffee = { name:'Czarna Fala Przelew 1 kg', type:'NORMAL' };
+  const valid = validateProductColumnMapping_('NORMAL', {
+    quantity:'B', weight:'', warehouse:'', darkroom:'', fridges:''
+  }, coffee);
+  assertCondition_(valid.valid, 'Product Manager musi akceptować B jako finalne sztuki Czarnej Fali.');
+  const invalid = validateProductColumnMapping_('NORMAL', {
+    quantity:'H', weight:'C', warehouse:'', darkroom:'', fridges:''
+  }, coffee);
+  assertCondition_(!invalid.valid, 'Product Manager musi odrzucać zwykłe mapowanie Czarnej Fali.');
+}
+
+function testXlsxExportWithoutDriveApi4313_() {
+  const url = buildSpreadsheetXlsxExportUrl_('test-sheet-id');
+  assertCondition_(url === 'https://docs.google.com/spreadsheets/d/test-sheet-id/export?format=xlsx',
+    'Nieprawidłowy endpoint XLSX.');
+  assertCondition_(url.indexOf('googleapis.com/drive/v3') === -1,
+    'Eksport XLSX nie może wymagać Drive API v3.');
+}
+
+function testFormulaRepairSegments432_() {
+  const plan = [
+    { row:3, columnNumber:5, r1c1:'=RC[-2]-RC[-1]' },
+    { row:4, columnNumber:5, r1c1:'=RC[-2]-RC[-1]' },
+    { row:6, columnNumber:5, r1c1:'=RC[-2]-RC[-1]' },
+    { row:3, columnNumber:10, r1c1:'=RC[-2]*RC[-1]' }
+  ];
+  const segments = buildFormulaRepairSegments_(plan);
+  assertCondition_(segments.length === 3,
+    'Plan powinien zostać podzielony na 3 bloki, otrzymano: ' + segments.length);
+  assertCondition_(segments.some(segment =>
+    segment.columnNumber === 5 && segment.startRow === 3 && segment.endRow === 4
+  ), 'Brakuje wspólnego bloku E3:E4.');
+}
+
+function testFormulaRepairConcurrency432_() {
+  const cells = {
+    E3:{ formula:'', value:1.5 },
+    J3:{ formula:'=H3*I3', value:1.4 }
+  };
+  const sheet = {
+    getRange: function(row, column) {
+      const a1 = (column === 5 ? 'E' : 'J') + row;
+      return {
+        getFormula: function() { return cells[a1].formula; },
+        getValue: function() { return cells[a1].value; },
+        setFormula: function(value) { cells[a1].formula = value; },
+        setValue: function(value) { cells[a1].formula = ''; cells[a1].value = value; },
+        clearContent: function() { cells[a1].formula = ''; cells[a1].value = ''; }
+      };
+    }
+  };
+  const plan = [{
+    row:3, column:'E', columnNumber:5, a1:'E3',
+    formula:'=C3-D3', previousFormula:'', previousValue:1.5
+  }];
+
+  preflightInventoryFormulaRepairPlan_(sheet, plan);
+  cells.E3.value = 9;
+  let blocked = false;
+  try { preflightInventoryFormulaRepairPlan_(sheet, plan); }
+  catch (error) { blocked = String(error && error.message || error).indexOf('zmieniona po audycie') >= 0; }
+  assertCondition_(blocked,
+    'Naprawa formuł musi zostać przerwana po ręcznej zmianie komórki od czasu audytu.');
+
+  cells.E3.value = 1.5;
+  cells.E3.formula = '=C3-D3';
+  rollbackInventoryFormulaRepairPlan_(sheet, plan);
+  assertCondition_(cells.E3.formula === '' && cells.E3.value === 1.5,
+    'Rollback powinien przywrócić stan komórki zapisanej przez naprawę.');
+
+  cells.E3.formula = '=C3-D3+1';
+  cells.E3.value = 2.5;
+  rollbackInventoryFormulaRepairPlan_(sheet, plan);
+  assertCondition_(cells.E3.formula === '=C3-D3+1' && cells.E3.value === 2.5,
+    'Rollback nie może nadpisać formuły zmienionej ręcznie po naprawie.');
+}
+
+function buildFormulaAuditFakeSheet432_(rowValues, rowFormulas, rowDisplayValues) {
+  const width = getInventoryLayoutMaxColumn_();
+  const empty = new Array(width).fill('');
+  const values = [empty.slice(), empty.slice()];
+  const formulas = [empty.slice(), empty.slice()];
+  const displays = [empty.slice(), empty.slice()];
+  values[1] = rowValues.slice();
+  formulas[1] = rowFormulas.slice();
+  displays[1] = rowDisplayValues.slice();
+  return {
+    getLastRow: function() { return 2; },
+    getName: function() { return 'INWENTURA'; },
+    getRange: function() {
+      return {
+        getValues: function() { return values; },
+        getFormulas: function() { return formulas; },
+        getDisplayValues: function() { return displays; }
+      };
+    }
+  };
+}
+
+function testFormulaConflictClassification432_() {
+  const width = getInventoryLayoutMaxColumn_();
+  const row = new Array(width).fill('');
+  row[2] = 2;       // C
+  row[3] = 0.5;     // D
+  row[4] = 999;     // E — konflikt, powinno być 1.5
+  row[6] = 0;       // G
+  row[7] = 2;       // H
+  row[8] = 0.7;     // I
+  const blankFormulas = new Array(width).fill('');
+  const display = row.map(value => value === '' ? '' : String(value));
+  const product = { inventoryRow:2, type:'NORMAL', category:'BITTER', name:'Test' };
+  const conflictAudit = buildInventoryFormulaAudit_(
+    buildFormulaAuditFakeSheet432_(row, blankFormulas, display), [product]
+  );
+  assertCondition_(conflictAudit.conflictFormulaCells === 1,
+    'Wartość sprzeczna z kontraktem musi zostać konfliktem.');
+  assertCondition_(conflictAudit.missingFormulaCells === 2,
+    'Puste J/K powinny zostać sklasyfikowane jako brakujące formuły.');
+  assertCondition_(conflictAudit.hasBlockingConflicts,
+    'Konflikt musi blokować automatyczną naprawę.');
+
+  const flattenedRow = row.slice();
+  flattenedRow[4] = 1.5;
+  const flattenedDisplay = flattenedRow.map(value => value === '' ? '' : String(value));
+  const flattenedAudit = buildInventoryFormulaAudit_(
+    buildFormulaAuditFakeSheet432_(flattenedRow, blankFormulas, flattenedDisplay), [product]
+  );
+  assertCondition_(flattenedAudit.flattenedFormulaCells === 1,
+    'Zgodny wynik bez formuły powinien zostać oznaczony jako spłaszczony.');
+
+  const legacyRow = new Array(width).fill('');
+  legacyRow[2] = 2;
+  legacyRow[3] = 0.5;
+  legacyRow[4] = 1.5;
+  legacyRow[6] = 0;
+  legacyRow[7] = 2;
+  legacyRow[8] = 0.7;
+  legacyRow[9] = 1.4;
+  legacyRow[10] = 2.9;
+  const legacyFormulas = new Array(width).fill('');
+  legacyFormulas[4] = '=C2-D2';
+  legacyFormulas[9] = '=H2*I2';
+  legacyFormulas[10] = '=E2+G2+J2';
+  const legacyDisplay = legacyRow.map(value => value === '' ? '' : String(value));
+  const legacyAudit = buildInventoryFormulaAudit_(
+    buildFormulaAuditFakeSheet432_(legacyRow, legacyFormulas, legacyDisplay), [product]
+  );
+  assertCondition_(legacyAudit.legacyFormulaCells === 1 && legacyAudit.invalidFormulaCells === 0,
+    'Poprawna starsza suma przez + powinna być migracją legacy, nie błędną formułą.');
+  assertCondition_(legacyAudit.operationallySafe && !legacyAudit.safe,
+    'Formuła legacy ma być poprawna operacyjnie, ale wymagać kanonizacji do SUM().');
+}
+
+function testUndoConflictEvaluation432_() {
+  const live = { C10:5, H11:9, E12:3 };
+  const formulas = { E12:'=C12-D12' };
+  const sheet = {
+    getRange: function(a1) {
+      return {
+        getValue: function() { return live[a1]; },
+        getFormula: function() { return formulas[a1] || ''; }
+      };
+    }
+  };
+  const plan = {
+    changes: [
+      { row:10, column:'C', previousValue:1, expectedNewValue:5, auditRows:[2] },
+      { row:11, column:'H', previousValue:2, expectedNewValue:6, auditRows:[3] },
+      { row:12, column:'E', previousValue:0, expectedNewValue:3, auditRows:[4] }
+    ]
+  };
+  const evaluated = evaluateUndoPlanAgainstInventory_(sheet, plan, { E12:{ formula:'=C12-D12' } });
+  assertCondition_(evaluated.applicableChanges.length === 1 && evaluated.applicableChanges[0].column === 'C',
+    'Tylko niezmieniona komórka C10 powinna zostać cofnięta.');
+  assertCondition_(evaluated.conflictChanges.length === 2,
+    'Ręczna zmiana i komórka formuły powinny zostać konfliktami.');
+  assertCondition_(evaluated.conflictChanges.some(change => change.reason === 'VALUE_CHANGED') &&
+      evaluated.conflictChanges.some(change => change.reason === 'FORMULA_PROTECTED'),
+    'Cofanie powinno rozróżniać zmianę ręczną i ochronę formuły.');
 }

@@ -4,7 +4,7 @@
  */
 
 const INVENTORY_BUSINESS_CATEGORIES_ = Object.freeze([
-  'BITTER', 'BRANDY', 'GIN', 'LIKIER', 'PIWO KEG', 'PIWO BUTELKI',
+  'BITTER', 'BRANDY', 'GIN', 'LIKIER', 'PIWO', 'PIWO KEG', 'PIWO BUTELKI',
   'RUM', 'TEQUILA', 'WERMUT', 'WHISKY', 'WINO', 'WÓDKA',
   'PREMIXY', 'SOFTY', 'KAWA'
 ]);
@@ -22,6 +22,7 @@ function normalizeBusinessCategory_(value) {
     { pattern: /softy/, value: 'SOFTY' },
     { pattern: /piwo\s+butelki/, value: 'PIWO BUTELKI' },
     { pattern: /piwo\s+keg/, value: 'PIWO KEG' },
+    { pattern: /^piw[oa]$/, value: 'PIWO' },
     { pattern: /\bbitter\b/, value: 'BITTER' },
     { pattern: /\bbrandy\b/, value: 'BRANDY' },
     { pattern: /\bgin\b/, value: 'GIN' },

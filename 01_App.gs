@@ -2,10 +2,9 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
 
   const reportingMenu = ui.createMenu('Raportowanie')
-    .addItem('Raport bieżącej inwentaryzacji', 'showReport')
-    .addItem('Dashboard managera', 'showInventoryDashboard')
-    .addItem('Porównanie inwentaryzacji', 'showInventoryAnalytics')
-    .addItem('Excel PRO i PDF', 'showFinalReview');
+    .addItem('Końcowy przegląd i eksport', 'showFinalReview')
+    .addItem('Dashboard bieżącej inwentaryzacji', 'showInventoryDashboard')
+    .addItem('Porównaj inwentaryzacje', 'showInventoryAnalytics');
 
   const catalogMenu = ui.createMenu('Produkty i aliasy')
     .addItem('Product Manager', 'showProductManager')
@@ -19,6 +18,8 @@ function onOpen() {
     .addItem('Testy raportowania', 'runReportingEngineTests')
     .addItem('Waliduj konfigurację', 'validateEnterpriseConfiguration')
     .addItem('Pokaż diagnostykę', 'showEnterpriseDiagnostics')
+    .addItem('Diagnostyka Parsera 4.3', 'showParserDiagnostics')
+    .addItem('Audyt formuł PAWILONÓW', 'auditInventoryFormulaCoverageWithDialog')
     .addSeparator()
     .addItem('Wyczyść cache katalogu', 'clearProductCatalogCache')
     .addItem('Audyt danych produktów', 'runProductDataAudit')
@@ -38,8 +39,9 @@ function onOpen() {
     .addSeparator()
     .addSubMenu(reportingMenu)
     .addSubMenu(catalogMenu)
-    .addItem('Historia', 'showHistory')
+    .addItem('Historia zdarzeń', 'showHistory')
     .addItem('Ustawienia', 'showSettings')
+    .addItem('Pomoc — przewodnik', 'showHelpGuide')
     .addSeparator()
     .addItem('Widok użytkownika', 'showUserWorkspace')
     .addItem('Widok managera', 'showManagerWorkspace')
@@ -66,7 +68,7 @@ function onEdit(event) {
     const name = normalizeText(sheet.getName());
     if (
       name === normalizeText(CONFIG.SHEETS.DICTIONARY) ||
-      (name === normalizeText(CONFIG.SHEETS.INVENTORY) && range.getColumn() === 1)
+      (isConfiguredSheetName_(sheet.getName(), CONFIG.SHEETS.INVENTORY) && range.getColumn() === 1)
     ) {
       invalidateProductCatalogCache_();
     }
@@ -80,11 +82,16 @@ function showNewProductsSheet_() {
 }
 
 function showReport() {
-  activateSheetByName_(CONFIG.SHEETS.REPORT);
+  // Zgodność ze starszym menu i skrótami. Arkusz RAPORT jest technicznym
+  // rejestrem importów; użytkownik otrzymuje właściwy przegląd końcowy.
+  showFinalReview();
 }
 
 function showHistory() {
-  activateSheetByName_(CONFIG.SHEETS.HISTORY);
+  const html = renderInventoryTemplate_('UI_History')
+    .setWidth(1120)
+    .setHeight(780);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Inventory PRO — Historia zdarzeń');
 }
 
 
@@ -97,7 +104,7 @@ function showSettings() {
 
 function activateSheetByName_(sheetName) {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = spreadsheet.getSheetByName(sheetName);
+  const sheet = getSheetByConfiguredName_(sheetName);
 
   if (!sheet) {
     const message = 'Nie znaleziono arkusza: ' + sheetName;
@@ -113,18 +120,27 @@ function activateSheetByName_(sheetName) {
     return;
   }
 
+  if (sheet.isSheetHidden()) sheet.showSheet();
   spreadsheet.setActiveSheet(sheet);
 }
 
 function showAbout() {
   const html = renderInventoryTemplate_('UI_About')
-    .setWidth(520)
-    .setHeight(620);
+    .setWidth(620)
+    .setHeight(760);
 
   SpreadsheetApp.getUi().showModalDialog(
     html,
     'O aplikacji'
   );
+}
+
+function showHelpGuide() {
+  const html = renderInventoryTemplate_('UI_Guide')
+    .setWidth(920)
+    .setHeight(760);
+
+  SpreadsheetApp.getUi().showModalDialog(html, 'Inventory PRO — Pomoc');
 }
 
 

@@ -10,17 +10,26 @@ function includeInventoryUiTheme_() {
   return HtmlService.createHtmlOutputFromFile('UI_Theme').getContent();
 }
 
+function includeInventoryHelp_() {
+  return HtmlService.createHtmlOutputFromFile('UI_Help').getContent();
+}
+
 function showImport() {
-  // v2.10.1: ImportDialog nie uzywa skryptletow. Ladowanie jako statyczny HTML
-  // eliminuje ryzyko wstrzykniecia zawartosci pliku testowego do interfejsu.
-  const html = HtmlService.createHtmlOutputFromFile('UI_Import')
-    .setWidth(1120)
-    .setHeight(820);
+  const html = renderInventoryTemplate_('UI_Import')
+    .setWidth(1320)
+    .setHeight(900);
 
   SpreadsheetApp.getUi().showModalDialog(
     html,
     'Inventory PRO - Import'
   );
+}
+
+function showParserDiagnostics() {
+  const html = renderInventoryTemplate_('UI_ParserDiagnostics')
+    .setWidth(1180)
+    .setHeight(820);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Inventory PRO — Diagnostyka Parsera');
 }
 
 /**

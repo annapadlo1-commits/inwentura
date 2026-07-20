@@ -7,7 +7,7 @@ function showInventoryDashboard() {
   const html = renderInventoryTemplate_('UI_Dashboard')
     .setWidth(1220)
     .setHeight(840);
-  SpreadsheetApp.getUi().showModalDialog(html, '🍕 Inventory PRO — Dashboardy managera');
+  SpreadsheetApp.getUi().showModalDialog(html, '🍕 Inventory PRO — Dashboard inwentaryzacji');
 }
 
 function getInventoryDashboardSources() {

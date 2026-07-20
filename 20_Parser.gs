@@ -18,16 +18,16 @@ function parseInventoryText(inputText, runtimeContext) {
   lines.forEach(line => {
     const prepared = prepareParserText_(line);
     const lineTokens = prepared.split(/\s+/).filter(Boolean);
-    const locationOnly = readLocationAt_(lineTokens, 0);
-    if (locationOnly && locationOnly.consumed === lineTokens.length) {
-      currentLocation = locationOnly.location;
+    const leadingLocation = readLocationAt_(lineTokens, 0);
+    if (leadingLocation) currentLocation = leadingLocation.location;
+    if (leadingLocation && leadingLocation.consumed === lineTokens.length) {
       return;
     }
     const parsed = parseInventoryTextContinuous_(line, context);
     parsed.forEach(item => {
       if (!item.location && currentLocation) item.location = currentLocation;
-      if (currentLocation && item.originalInput && !normalizeText(item.originalInput).startsWith(normalizeText(currentLocation))) {
-        item.originalInput = currentLocation + ' ' + item.originalInput;
+      if (item.location && item.originalInput && !normalizeText(item.originalInput).startsWith(normalizeText(item.location))) {
+        item.originalInput = item.location + ' ' + item.originalInput;
       }
       results.push(item);
     });
@@ -84,11 +84,12 @@ function parseInventoryTextContinuous_(inputText, runtimeContext) {
     );
 
     if (dictionaryEntry) {
+      const effectiveLocation = dictionaryEntry.location || currentLocation;
       results.push({
-        originalInput: [currentLocation, dictionaryEntry.originalInput].filter(Boolean).join(' '),
+        originalInput: [effectiveLocation, dictionaryEntry.originalInput].filter(Boolean).join(' '),
         product: dictionaryEntry.product,
         value: dictionaryEntry.value,
-        location: currentLocation,
+        location: effectiveLocation,
         status: dictionaryEntry.value === null ? 'ERROR' : 'OK',
         message: dictionaryEntry.value === null ? 'Nie znaleziono ilosci' : 'Rozpoznano dictionary-first'
       });
@@ -223,7 +224,18 @@ function findDictionaryFirstInventoryEntryAt_(tokens, startPosition, context) {
 
   const span = findLongestExactCatalogSpanAt_(tokens, startPosition, context);
   if (!span) return null;
-  const number = readNumberAt_(tokens, span.endPosition);
+  const explicitLocation = readLocationAt_(tokens, span.endPosition);
+  const numberPosition = span.endPosition + (explicitLocation ? explicitLocation.consumed : 0);
+  const number = readNumberAt_(tokens, numberPosition);
+  // Nie zatwierdzamy krótszej nazwy bez wartości, jeżeli po niej pozostaje
+  // dalsza część wpisu. Przykład krytyczny:
+  //   magazyn Inne beczki Pilsner 2
+  // Katalog może zawierać także krótszą pozycję „Inne Beczki”. Wcześniej
+  // parser emitował ją jako błąd, a „Pilsner 2” przypisywał do innego
+  // pilsnera. Cały fragment musi przejść przez bezpieczną ocenę granicy.
+  if (!number && numberPosition < tokens.length) {
+    return null;
+  }
   if (
     number &&
     isProtectedCatalogNumericNameToken_(tokens, startPosition, span.endPosition, context)
@@ -231,19 +243,44 @@ function findDictionaryFirstInventoryEntryAt_(tokens, startPosition, context) {
     return null;
   }
   return {
-    originalInput: tokens.slice(startPosition, number ? span.endPosition + number.consumed : span.endPosition).join(' '),
+    originalInput: tokens.slice(startPosition, number ? numberPosition + number.consumed : numberPosition).join(' '),
     product: span.product.name,
     value: number ? number.value : null,
-    nextPosition: number ? span.endPosition + number.consumed : span.endPosition
+    nextPosition: number ? numberPosition + number.consumed : numberPosition,
+    location: explicitLocation ? explicitLocation.location : ''
   };
 }
 
 function findLongestExactCatalogSpanAt_(tokens, startPosition, context) {
   if (startPosition >= tokens.length) return null;
   const runtime = context || buildRuntimeContext_();
-  const phraseIndex = getParserPhraseIndex_(runtime);
+  const trie = getParserPhraseTrie_(runtime);
   const maxEnd = Math.min(tokens.length, startPosition + 16);
+  let node = trie;
   let best = null;
+
+  for (let end = startPosition; end < maxEnd && node; end++) {
+    const tokenParts = canonicalParserPhrase_(cleanNameToken_(tokens[end])).split(' ').filter(Boolean);
+    for (let partIndex = 0; partIndex < tokenParts.length; partIndex++) {
+      node = node.children[tokenParts[partIndex]] || null;
+      if (!node) break;
+    }
+    if (node && node.products && node.products.length === 1) {
+      best = {
+        endPosition: end + 1,
+        recognitionInput: node.products[0].name,
+        product: node.products[0],
+        matchedPhrase: tokens.slice(startPosition, end + 1).join(' ')
+      };
+    }
+  }
+  const nextAfterTrie = best ? normalizeWordForParser_(tokens[best.endPosition] || '') : '';
+  if (best && !['zero', 'pol'].includes(nextAfterTrie)) return best;
+
+  // Zachowujemy kompatybilny fallback dla transformacji technicznych,
+  // których nie da się przejść token po tokenie w surowym tekście.
+  const phraseIndex = getParserPhraseIndex_(runtime);
+  best = null;
 
   for (let end = startPosition + 1; end <= maxEnd; end++) {
     const raw = cleanProductName_(
@@ -269,6 +306,29 @@ function findLongestExactCatalogSpanAt_(tokens, startPosition, context) {
     }
   }
   return best;
+}
+
+function getParserPhraseTrie_(context) {
+  const phraseIndex = getParserPhraseIndex_(context);
+  if (context.parserPhraseTrie && context.parserPhraseTrieSourceIndex === phraseIndex) {
+    return context.parserPhraseTrie;
+  }
+  context.parserPhraseTrie = buildParserPhraseTrieFromIndex_(phraseIndex);
+  context.parserPhraseTrieSourceIndex = phraseIndex;
+  return context.parserPhraseTrie;
+}
+
+function buildParserPhraseTrieFromIndex_(phraseIndex) {
+  const root = { children: {}, products: null };
+  Object.keys(phraseIndex || {}).forEach(key => {
+    let node = root;
+    key.split(' ').filter(Boolean).forEach(token => {
+      if (!node.children[token]) node.children[token] = { children: {}, products: null };
+      node = node.children[token];
+    });
+    node.products = phraseIndex[key];
+  });
+  return root;
 }
 
 function getParserPhraseIndex_(context) {
@@ -464,12 +524,25 @@ function isParserMatchAnchoredAtStart_(inputName, match) {
       });
     });
 
-    return inputVariants.some(inputVariant =>
+    const exactAnchor = inputVariants.some(inputVariant =>
       targetVariants.some(targetVariant =>
         inputVariant === targetVariant ||
         targetVariant.startsWith(inputVariant + ' ')
       )
     );
+    if (exactAnchor) return true;
+
+    // Drobna literówka na początku nazwy nie może wyłączyć poprawnego
+    // dopasowania SMART. Nadal wymagamy bardzo wysokiego wyniku, zgodnych
+    // cyfr i podobnego pierwszego tokenu, więc matcher nie może przeskoczyć
+    // do produktu występującego dopiero dalej w tekście.
+    const scored = scoreRecognitionCandidate_(inputName, product);
+    const inputFirst = normalizeRecognitionForScore_(inputName).split(' ')[0] || '';
+    const targetFirst = normalizeRecognitionForScore_(product.name).split(' ')[0] || '';
+    return scored.score >= 94 &&
+      !scored.numericConflict &&
+      !scored.missingRequiredNumber &&
+      calculateStringSimilarity_(inputFirst, targetFirst) >= 0.78;
   });
 }
 
@@ -833,41 +906,31 @@ function isConnectorWord_(value) {
 }
 
 function readLocationAt_(tokens, position) {
-  const one = normalizeWordForParser_(
-    tokens[position] || ''
-  );
+  const source = Array.isArray(tokens) ? tokens : [];
+  const definitions = getLocationAreaDefinitions_();
+  let best = null;
 
-  const two = normalizeWordForParser_(
-    [tokens[position], tokens[position + 1]]
-      .filter(Boolean)
-      .join(' ')
-  );
+  definitions.forEach(area => {
+    const candidates = [area.key, area.label].concat(area.aliases || []);
+    candidates.forEach(candidate => {
+      const normalized = normalizeWordForParser_(candidate || '');
+      if (!normalized) return;
+      const consumed = normalized.split(/\s+/).filter(Boolean).length;
+      const phraseTokens = source
+        .slice(position, position + consumed)
+        .filter(token => token !== null && token !== undefined && String(token).trim() !== '');
 
-  if (two === 'dark room') {
-    return {
-      location: 'darkroom',
-      consumed: 2
-    };
-  }
+      // Nie wolno uznać jednoelementowego końca wiersza za dwuwyrazowy alias.
+      if (phraseTokens.length !== consumed) return;
+      const phrase = normalizeWordForParser_(phraseTokens.join(' '));
+      if (phrase !== normalized) return;
+      if (!best || consumed > best.consumed) {
+        best = { location: area.key, consumed: consumed };
+      }
+    });
+  });
 
-  const locations = {
-    magazyn: 'magazyn',
-    warehouse: 'magazyn',
-    darkroom: 'darkroom',
-    lodowki: 'lodowki',
-    lodowka: 'lodowki',
-    fridge: 'lodowki',
-    fridges: 'lodowki'
-  };
-
-  if (locations[one]) {
-    return {
-      location: locations[one],
-      consumed: 1
-    };
-  }
-
-  return null;
+  return best;
 }
 
 function readNumberAt_(tokens, position) {
@@ -1070,9 +1133,36 @@ function matchProductForParser_(recognitionInput, context) {
 
   if (best) return best;
   const fallbackInput = variants[0] || normalizeRecognitionInput_(recognitionInput);
+  const fallbackMatch = matchProduct(fallbackInput, context);
+  if (!isParserMatchAnchoredAtStart_(fallbackInput, fallbackMatch)) {
+    const candidates = [];
+    if (fallbackMatch && fallbackMatch.product) {
+      candidates.push({ product: fallbackMatch.product, score: fallbackMatch.score || 0 });
+    }
+    (fallbackMatch && fallbackMatch.candidates || []).forEach(candidate => {
+      if (!candidate || !candidate.product) return;
+      if (!candidates.some(item => normalizeText(item.product.name) === normalizeText(candidate.product.name))) {
+        candidates.push(candidate);
+      }
+    });
+    return {
+      recognitionInput: fallbackInput,
+      match: recognitionResult_(
+        false,
+        candidates.length ? 'AMBIGUOUS' : 'NOT_FOUND',
+        fallbackInput,
+        null,
+        candidates,
+        fallbackMatch && fallbackMatch.score || 0,
+        'Nazwa zawiera nierozpoznany początek — wybierz produkt ręcznie'
+      ),
+      score: -1,
+      safetyBlocked: true
+    };
+  }
   return {
     recognitionInput: fallbackInput,
-    match: matchProduct(fallbackInput, context),
+    match: fallbackMatch,
     score: -1
   };
 }
